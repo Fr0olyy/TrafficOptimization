@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { FileText, X, Zap } from 'lucide-react';
+import { FileText, X, Zap, CheckCircle } from 'lucide-react';
 import { validateFile, formatFileSize } from '../../utils/validators';
 
 interface UploadScreenProps {
@@ -27,6 +27,7 @@ export function UploadScreen({ onFileSelect }: UploadScreenProps) {
 
     const files = e.dataTransfer.files;
     const file = files && files.length > 0 ? files[0] : null;
+
     if (file) {
       const validation = validateFile(file);
       if (validation.valid) {
@@ -41,6 +42,7 @@ export function UploadScreen({ onFileSelect }: UploadScreenProps) {
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     const file = files && files.length > 0 ? files[0] : null;
+
     if (file) {
       const validation = validateFile(file);
       if (validation.valid) {
@@ -64,126 +66,93 @@ export function UploadScreen({ onFileSelect }: UploadScreenProps) {
   }, [selectedFile, onFileSelect]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-6">
-      <div className="w-full max-w-3xl">
+    <div className="upload-screen">
+      <div className="upload-container">
         {/* Header */}
-        <div className="text-center mb-12 animate-fade-in-up">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ background: 'var(--color-quantum)' }}>
-              <span className="text-3xl">⚛️</span>
-            </div>
-            <h1 className="text-4xl font-bold gradient-text">
-              Quantum Traffic Optimizer
-            </h1>
+        <header className="upload-header">
+          <div className="logo">
+            <span className="logo-icon">⚛️</span>
+            <h1 className="logo-text">Quantum Traffic Optimizer</h1>
           </div>
-          <p className="text-lg" style={{ color: 'var(--color-text-secondary)' }}>
-            Hybrid Classical-Quantum Route Solver for Advanced Traffic Optimization
-          </p>
-        </div>
+          <p className="subtitle">Hybrid Classical-Quantum Route Solver for Advanced Traffic Optimization</p>
+        </header>
 
         {/* Upload Zone */}
-        <div
-          className={`glass-effect rounded-2xl p-8 transition-all duration-300 ${
-            isDragging ? 'glow-effect scale-105' : ''
-          }`}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-        >
+        <div className="upload-zone-wrapper">
           {!selectedFile ? (
-            <label className="cursor-pointer block">
+            <div
+              className={`upload-zone ${isDragging ? 'dragging' : ''}`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
               <input
                 type="file"
-                className="hidden"
+                id="file-input"
                 accept=".csv,.txt"
                 onChange={handleFileInput}
+                className="file-input-hidden"
               />
-              
-              <div className="border-2 border-dashed rounded-xl p-16 text-center transition-all duration-300 hover:border-opacity-80"
-                style={{ borderColor: 'rgba(102, 126, 234, 0.5)' }}>
-                <div className="flex justify-center mb-6">
-                  <div className="w-20 h-20 rounded-2xl flex items-center justify-center" 
-                    style={{ background: 'rgba(139, 92, 246, 0.2)' }}>
-                    <span className="text-5xl">📁</span>
-                  </div>
+              <label htmlFor="file-input" className="upload-label">
+                <FileText className="upload-icon" size={48} />
+                <h3 className="upload-title">Drag & Drop CSV/TXT File</h3>
+                <p className="upload-subtitle">or click to browse</p>
+                <div className="upload-info">
+                  <span className="info-item">✓ Max size: 64MB</span>
+                  <span className="info-item">✓ Formats: .csv, .txt</span>
                 </div>
-                <h3 className="text-2xl font-semibold mb-3">
-                  Drag & Drop CSV/TXT File or click to browse
-                </h3>
-                <div className="space-y-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                  <p>✓ Max size: 64MB</p>
-                  <p>✓ Formats: .csv, .txt</p>
-                </div>
-              </div>
-            </label>
+              </label>
+            </div>
           ) : (
-            <div className="animate-fade-in">
-              <div className="flex items-center justify-between rounded-xl p-6 mb-6"
-                style={{ background: 'var(--color-bg-elevated)' }}>
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-xl flex items-center justify-center"
-                    style={{ background: 'rgba(102, 126, 234, 0.2)' }}>
-                    <FileText className="w-7 h-7" style={{ color: 'var(--color-primary)' }} />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-lg">{selectedFile.name}</p>
-                    <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-                      {formatFileSize(selectedFile.size)}
-                    </p>
-                  </div>
+            <div className="file-selected">
+              <div className="file-info">
+                <FileText className="file-icon" size={32} />
+                <div className="file-details">
+                  <h4 className="file-name">{selectedFile.name}</h4>
+                  <p className="file-size">{formatFileSize(selectedFile.size)}</p>
                 </div>
-                <button
-                  onClick={handleClearFile}
-                  className="w-10 h-10 rounded-lg flex items-center justify-center transition-all hover:scale-110"
-                  style={{ background: 'rgba(239, 68, 68, 0.2)' }}>
-                  <X className="w-5 h-5" style={{ color: 'var(--color-error)' }} />
+                <button onClick={handleClearFile} className="clear-button" aria-label="Remove file">
+                  <X size={20} />
                 </button>
               </div>
-
-              <button
-                onClick={handleAnalyze}
-                className="w-full py-4 rounded-xl font-semibold text-lg flex items-center justify-center gap-3 transition-all hover:opacity-90"
-                style={{ background: 'linear-gradient(135deg, var(--color-primary), var(--color-secondary))' }}>
-                <Zap className="w-5 h-5" />
-                Analyze with Quantum AI
+              <button onClick={handleAnalyze} className="analyze-button">
+                <Zap size={20} />
+                <span>Analyze with Quantum AI</span>
               </button>
             </div>
           )}
 
           {errors.length > 0 && (
-            <div className="mt-4 p-4 rounded-lg border-2 animate-fade-in"
-              style={{ background: 'rgba(239, 68, 68, 0.1)', borderColor: 'var(--color-error)' }}>
+            <div className="errors-container">
               {errors.map((error, i) => (
-                <p key={i} className="text-sm" style={{ color: 'var(--color-error)' }}>
-                  ⚠️ {error}
-                </p>
+                <div key={i} className="error-message">
+                  <span className="error-icon">⚠️</span>
+                  <span>{error}</span>
+                </div>
               ))}
             </div>
           )}
         </div>
 
         {/* Info Section */}
-        <div className="mt-8 glass-effect rounded-xl p-6 animate-fade-in delay-200">
-          <h3 className="font-semibold mb-4 flex items-center gap-2">
-            <span className="text-2xl">💡</span>
-            <span>What we do:</span>
-          </h3>
-          <ul className="space-y-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            <li className="flex items-center gap-2">
-              <span style={{ color: 'var(--color-success)' }}>✓</span>
-              Parse graph adjacency matrix from your data
+        <div className="info-section">
+          <h3 className="info-title">What we do:</h3>
+          <ul className="info-list">
+            <li className="info-list-item">
+              <CheckCircle className="check-icon" size={20} />
+              <span>Parse graph adjacency matrix from your data</span>
             </li>
-            <li className="flex items-center gap-2">
-              <span style={{ color: 'var(--color-success)' }}>✓</span>
-              Run classical algorithms (Dijkstra, Greedy)
+            <li className="info-list-item">
+              <CheckCircle className="check-icon" size={20} />
+              <span>Run classical algorithms (Dijkstra, Greedy)</span>
             </li>
-            <li className="flex items-center gap-2">
-              <span style={{ color: 'var(--color-success)' }}>✓</span>
-              Execute quantum optimization (QUBO + QAOA)
+            <li className="info-list-item">
+              <CheckCircle className="check-icon" size={20} />
+              <span>Execute quantum optimization (QUBO + QAOA)</span>
             </li>
-            <li className="flex items-center gap-2">
-              <span style={{ color: 'var(--color-success)' }}>✓</span>
-              Compare results and visualize improvements
+            <li className="info-list-item">
+              <CheckCircle className="check-icon" size={20} />
+              <span>Compare results and visualize improvements</span>
             </li>
           </ul>
         </div>
