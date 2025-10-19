@@ -2,6 +2,29 @@ import { useState } from 'react';
 import { Download, RefreshCw, Timer, Zap, TrendingDown, BarChart3 } from 'lucide-react';
 import type { ProcessResponse } from '../../types';
 import { calculateAverageSpeedup, calculateAverageImprovement } from '../../utils/calculations';
+import { GraphVisualization } from '../visualization/GraphVisualization';
+import { YandexMapsVisualization } from '../visualization/YandexMapsVisualization';
+
+// --- mock for demo, заменяй на реальные данные:
+const sampleGraph = {
+  nodes: [
+    { id: 0, label: 'A' }, { id: 1, label: 'B' }, { id: 2, label: 'C' }, { id: 3, label: 'D' }
+  ],
+  edges: [
+    { from: 0, to: 1, weight: 6 },
+    { from: 0, to: 2, weight: 8 },
+    { from: 1, to: 2, weight: 12 },
+    { from: 2, to: 3, weight: 5 }
+  ]
+};
+const sampleCoords = [
+  { id: 0, lat: 55.7558, lon: 37.6173, label: 'A' },
+  { id: 1, lat: 55.7522, lon: 37.6156, label: 'B' },
+  { id: 2, lat: 55.7489, lon: 37.6201, label: 'C' },
+  { id: 3, lat: 55.7525, lon: 37.6279, label: 'D' }
+];
+const classicalPath = [0, 1, 2, 3];
+const quantumPath = [0, 2, 3];
 
 interface ResultsDashboardProps {
   results: ProcessResponse;
@@ -10,7 +33,6 @@ interface ResultsDashboardProps {
   onDownloadClassical: () => void;
   onDownloadQuantum: () => void;
 }
-
 export function ResultsDashboard({
   results,
   filename,
@@ -40,7 +62,6 @@ export function ResultsDashboard({
               </p>
             </div>
           </div>
-
           <div className="flex items-center gap-3">
             <button
               onClick={onNewAnalysis}
@@ -49,7 +70,6 @@ export function ResultsDashboard({
               <RefreshCw className="w-4 h-4" />
               New Analysis
             </button>
-
             <div className="relative">
               <button
                 onClick={() => setShowDownloadMenu(!showDownloadMenu)}
@@ -58,7 +78,6 @@ export function ResultsDashboard({
                 <Download className="w-4 h-4" />
                 Download
               </button>
-
               {showDownloadMenu && (
                 <div className="absolute right-0 mt-2 w-48 glass-effect rounded-lg border shadow-xl overflow-hidden"
                   style={{ borderColor: 'rgba(255, 255, 255, 0.1)' }}>
@@ -78,7 +97,6 @@ export function ResultsDashboard({
           </div>
         </div>
       </div>
-
       {/* Main Content */}
       <div className="flex">
         {/* Left Panel - 40% */}
@@ -101,7 +119,6 @@ export function ResultsDashboard({
                 End-to-end optimization
               </div>
             </div>
-
             {/* Quantum Speedup */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
               <div className="flex items-center gap-3 mb-3">
@@ -119,7 +136,6 @@ export function ResultsDashboard({
                 Average across all graphs
               </div>
             </div>
-
             {/* Distance Improvement */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
               <div className="flex items-center gap-3 mb-3">
@@ -136,7 +152,6 @@ export function ResultsDashboard({
                 Distance improvement
               </div>
             </div>
-
             {/* Graphs Analyzed */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
               <div className="flex items-center gap-3 mb-3">
@@ -155,7 +170,6 @@ export function ResultsDashboard({
             </div>
           </div>
         </div>
-
         {/* Right Panel - 60% */}
         <div className="w-[60%] p-6 overflow-y-auto scrollbar-hide" style={{ maxHeight: 'calc(100vh - 80px)' }}>
           {/* Tabs */}
@@ -175,7 +189,6 @@ export function ResultsDashboard({
               </button>
             ))}
           </div>
-
           {/* Metrics Table */}
           {activeTab === 'metrics' && (
             <div className="glass-effect rounded-xl p-6">
@@ -218,28 +231,20 @@ export function ResultsDashboard({
               </div>
             </div>
           )}
-
           {activeTab === 'visualization' && (
-            <div className="glass-effect rounded-xl p-12 text-center">
-              <div className="text-6xl mb-6">📊</div>
-              <h3 className="text-2xl font-semibold mb-4">Graph Visualization</h3>
-              <p className="mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-                Install vis-network to enable interactive graph visualization
-              </p>
-              <code className="px-4 py-2 rounded text-sm" style={{ background: 'var(--color-bg-elevated)' }}>
-                npm install vis-network vis-data
-              </code>
-            </div>
+            <GraphVisualization
+              graphData={sampleGraph} // заменяй на свои реальные
+              classicalPath={classicalPath}
+              quantumPath={quantumPath}
+            />
           )}
-
           {activeTab === 'maps' && (
-            <div className="glass-effect rounded-xl p-12 text-center">
-              <div className="text-6xl mb-6">🗺️</div>
-              <h3 className="text-2xl font-semibold mb-4">Geographic Visualization</h3>
-              <p className="mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-                Add coordinates to your CSV to display routes on Yandex Maps
-              </p>
-            </div>
+            <YandexMapsVisualization
+              apiKey="bbbcfa5a-fe28-4f09-aa62-dece34cbc32d"
+              coordinates={sampleCoords} // заменяй на свои реальные
+              classicalRoute={classicalPath}
+              quantumRoute={quantumPath}
+            />
           )}
         </div>
       </div>
