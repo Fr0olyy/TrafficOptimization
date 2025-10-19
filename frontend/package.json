@@ -15,7 +15,9 @@
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "recharts": "^3.3.0",
-    "tailwindcss": "^4.1.14"
+    "tailwindcss": "^4.1.14",
+    "vis-data": "^8.0.3",
+    "vis-network": "^10.0.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
