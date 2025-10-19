@@ -35,23 +35,6 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// Статика: раздаём ./web (index.html и ассеты)
-	webDir := getenv("WEB_DIR", "web")
-	fs := http.FileServer(http.Dir(webDir))
-	// Отдаём index.html на корне
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			// Попытка отдать файл из web/
-			path := filepath.Join(webDir, filepath.Clean(r.URL.Path))
-			if _, err := os.Stat(path); err == nil {
-				fs.ServeHTTP(w, r)
-				return
-			}
-			// Фоллбэк на index.html (SPA)
-		}
-		http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
-	})
-
 	// API
 	mux.HandleFunc("/process", process)   // POST: принимает файл и возвращает JSON
 	mux.HandleFunc("/download", download) // GET: скачивание CSV по id
@@ -69,7 +52,7 @@ func main() {
 	})
 
 	addr := ":" + getenv("PORT", "9000")
-	log.Printf("Listening on %s (static from ./%s)", addr, webDir)
+	log.Printf("Listening on %s (static from ./%s)", addr)
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
 	}
