@@ -5,6 +5,7 @@
 export interface GraphMetrics {
   total_distance: number;
   opt_time_ms: number;
+  routes_optimized?: number[][];
 }
 
 export interface AlgorithmMetrics {
@@ -22,6 +23,8 @@ export interface GraphResult {
   classical: AlgorithmMetrics;
   quantum: AlgorithmMetrics;
   compare: ComparisonMetrics;
+  num_nodes: number;
+  num_vehicles: number;
 }
 
 export interface ProcessResponse {
@@ -48,3 +51,4 @@ export interface AppError {
   message: string;
   details?: string;
 }
+

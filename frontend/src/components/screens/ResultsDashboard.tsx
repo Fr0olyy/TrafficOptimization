@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Download, RefreshCw, Timer, Zap, TrendingDown, BarChart3 } from 'lucide-react';
 import type { ProcessResponse } from '../../types';
 import { calculateAverageSpeedup, calculateAverageImprovement } from '../../utils/calculations';
+import { GraphVisualization } from '../visualization/GraphVisualization';
+import { YandexMapsVisualization } from '../visualization/YandexMapsVisualization';
+import { generateGraphCoordinates, generateCircularCoordinates } from '../../utils/coordinateGenerator';
 
 interface ResultsDashboardProps {
   results: ProcessResponse;
@@ -20,9 +23,82 @@ export function ResultsDashboard({
 }: ResultsDashboardProps) {
   const [activeTab, setActiveTab] = useState<'metrics' | 'visualization' | 'maps'>('metrics');
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
+  const [selectedGraphIndex, setSelectedGraphIndex] = useState(0);
 
   const avgSpeedup = calculateAverageSpeedup(results);
   const avgImprovement = calculateAverageImprovement(results);
+
+  const currentGraph = results.perGraph[selectedGraphIndex];
+
+  // Подготовка данных для GraphVisualization
+  const graphData = useMemo(() => {
+    if (!currentGraph) return null;
+
+    const numNodes = currentGraph.num_nodes || 100;
+    
+    const nodes = Array.from({ length: numNodes }, (_, i) => ({
+      id: i,
+      label: `${i}`
+    }));
+
+    const edges: Array<{ from: number; to: number; weight: number }> = [];
+    const edgeSet = new Set<string>();
+
+    // Собираем рёбра из маршрутов
+    const addEdgesFromRoutes = (routes: number[][] | undefined) => {
+      if (!routes) return;
+      routes.forEach((route: number[]) => {
+        for (let i = 0; i < route.length - 1; i++) {
+          const from = Math.min(route[i], route[i + 1]);
+          const to = Math.max(route[i], route[i + 1]);
+          const key = `${from}-${to}`;
+          if (!edgeSet.has(key) && from < numNodes && to < numNodes) {
+            edgeSet.add(key);
+            edges.push({ from, to, weight: 1 });
+          }
+        }
+      });
+    };
+
+    addEdgesFromRoutes(currentGraph.classical?.enhanced?.routes_optimized);
+    addEdgesFromRoutes(currentGraph.quantum?.enhanced?.routes_optimized);
+
+    return { nodes, edges };
+  }, [currentGraph]);
+
+  // Подготовка путей
+  const classicalPath = useMemo(() => {
+    return currentGraph?.classical?.enhanced?.routes_optimized?.[0] || [];
+  }, [currentGraph]);
+
+  const quantumPath = useMemo(() => {
+    return currentGraph?.quantum?.enhanced?.routes_optimized?.[0] || [];
+  }, [currentGraph]);
+
+  // Генерация координат автоматически
+  const coordinates = useMemo(() => {
+    if (!graphData) return [];
+
+    // Используем graph_index как seed для детерминированной генерации
+    const seed = currentGraph?.graph_index || 0;
+
+    if (graphData.edges.length > 0) {
+      // Если есть рёбра, используем force-directed layout
+      return generateGraphCoordinates(graphData.nodes, graphData.edges, {
+        centerLat: 55.7558,
+        centerLon: 37.6173,
+        radiusKm: 8,
+        seed: seed + 42
+      });
+    } else {
+      // Если рёбер нет, располагаем по кругу
+      return generateCircularCoordinates(graphData.nodes, {
+        centerLat: 55.7558,
+        centerLon: 37.6173,
+        radiusKm: 5
+      });
+    }
+  }, [graphData, currentGraph]);
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--color-bg-primary)' }}>
@@ -83,7 +159,7 @@ export function ResultsDashboard({
       <div className="flex">
         {/* Left Panel - 40% */}
         <div className="w-[40%] p-6 space-y-6 overflow-y-auto scrollbar-hide" style={{ maxHeight: 'calc(100vh - 80px)' }}>
-          {/* Summary Cards */}
+          {/* Summary Cards - same as before */}
           <div className="grid grid-cols-2 gap-4">
             {/* Total Time */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
@@ -97,12 +173,9 @@ export function ResultsDashboard({
                 {(results.elapsed_ms / 1000).toFixed(2)}s
               </div>
               <div className="text-sm font-medium">Total Processing Time</div>
-              <div className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
-                End-to-end optimization
-              </div>
             </div>
 
-            {/* Quantum Speedup */}
+            {/* Other cards... */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-12 h-12 rounded-lg flex items-center justify-center"
@@ -115,12 +188,8 @@ export function ResultsDashboard({
                 {avgSpeedup.toFixed(2)}x
               </div>
               <div className="text-sm font-medium">Quantum Speedup</div>
-              <div className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
-                Average across all graphs
-              </div>
             </div>
 
-            {/* Distance Improvement */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-12 h-12 rounded-lg flex items-center justify-center"
@@ -132,12 +201,8 @@ export function ResultsDashboard({
                 {avgImprovement.toFixed(1)}%
               </div>
               <div className="text-sm font-medium">Route Optimization</div>
-              <div className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
-                Distance improvement
-              </div>
             </div>
 
-            {/* Graphs Analyzed */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-12 h-12 rounded-lg flex items-center justify-center"
@@ -149,11 +214,26 @@ export function ResultsDashboard({
                 {results.perGraph.length}
               </div>
               <div className="text-sm font-medium">Graphs Analyzed</div>
-              <div className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
-                Successfully processed
-              </div>
             </div>
           </div>
+
+          {/* Graph Selector */}
+          {results.perGraph.length > 1 && (
+            <div className="glass-effect rounded-xl p-4">
+              <label className="text-sm font-medium mb-2 block">Select Graph:</label>
+              <select
+                value={selectedGraphIndex}
+                onChange={(e) => setSelectedGraphIndex(Number(e.target.value))}
+                className="w-full px-4 py-2 rounded-lg text-sm"
+                style={{ background: 'var(--color-bg-elevated)', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                {results.perGraph.map((g, idx) => (
+                  <option key={idx} value={idx}>
+                    Graph {g.graph_index} ({g.num_nodes} nodes)
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Right Panel - 60% */}
@@ -194,20 +274,20 @@ export function ResultsDashboard({
                     {results.perGraph.map((g) => (
                       <tr key={g.graph_index} className="border-b hover:bg-white hover:bg-opacity-5 transition-colors"
                         style={{ borderColor: 'rgba(255, 255, 255, 0.05)' }}>
-                        <td className="py-3 px-4 font-medium">{g.graph_index}</td>
+                        <td className="py-3 px-4 font-medium">Graph {g.graph_index}</td>
                         <td className="text-right py-3 px-4 font-mono">
-                          {typeof g.classical.enhanced.opt_time_ms === 'number'
+                          {typeof g.classical?.enhanced?.opt_time_ms === 'number'
                             ? g.classical.enhanced.opt_time_ms.toFixed(0) + 'ms'
                             : 'N/A'}
                         </td>
                         <td className="text-right py-3 px-4 font-mono" style={{ color: 'var(--color-quantum)' }}>
-                          {typeof g.quantum.enhanced.opt_time_ms === 'number'
+                          {typeof g.quantum?.enhanced?.opt_time_ms === 'number'
                             ? g.quantum.enhanced.opt_time_ms.toFixed(0) + 'ms'
                             : 'N/A'}
                         </td>
                         <td className="text-right py-3 px-4 font-mono font-semibold"
-                          style={{ color: g.compare.quantum_speedup > 1 ? 'var(--color-success)' : 'var(--color-error)' }}>
-                          {typeof g.compare.quantum_speedup === 'number'
+                          style={{ color: g.compare?.quantum_speedup > 1 ? 'var(--color-success)' : 'var(--color-error)' }}>
+                          {typeof g.compare?.quantum_speedup === 'number'
                             ? g.compare.quantum_speedup.toFixed(2) + 'x'
                             : 'N/A'}
                         </td>
@@ -219,27 +299,23 @@ export function ResultsDashboard({
             </div>
           )}
 
-          {activeTab === 'visualization' && (
-            <div className="glass-effect rounded-xl p-12 text-center">
-              <div className="text-6xl mb-6">📊</div>
-              <h3 className="text-2xl font-semibold mb-4">Graph Visualization</h3>
-              <p className="mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-                Install vis-network to enable interactive graph visualization
-              </p>
-              <code className="px-4 py-2 rounded text-sm" style={{ background: 'var(--color-bg-elevated)' }}>
-                npm install vis-network vis-data
-              </code>
-            </div>
+          {/* Visualization Tab */}
+          {activeTab === 'visualization' && graphData && (
+            <GraphVisualization
+              graphData={graphData}
+              classicalPath={classicalPath}
+              quantumPath={quantumPath}
+            />
           )}
 
+          {/* Maps Tab */}
           {activeTab === 'maps' && (
-            <div className="glass-effect rounded-xl p-12 text-center">
-              <div className="text-6xl mb-6">🗺️</div>
-              <h3 className="text-2xl font-semibold mb-4">Geographic Visualization</h3>
-              <p className="mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-                Add coordinates to your CSV to display routes on Yandex Maps
-              </p>
-            </div>
+            <YandexMapsVisualization
+              apiKey="bbbcfa5a-fe28-4f09-aa62-dece34cbc32d"
+              coordinates={coordinates}
+              classicalRoute={classicalPath}
+              quantumRoute={quantumPath}
+            />
           )}
         </div>
       </div>

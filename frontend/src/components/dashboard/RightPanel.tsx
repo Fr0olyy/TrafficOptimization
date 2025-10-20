@@ -1,3 +1,5 @@
+import { GraphVisualization } from '../visualization/GraphVisualization';
+import { YandexMapsVisualization } from '../visualization/YandexMapsVisualization';
 import type { ProcessResponse, TabType } from '../../types';
 
 interface RightPanelProps {
@@ -8,100 +10,85 @@ interface RightPanelProps {
 }
 
 export function RightPanel({ results, activeTab, onTabChange, selectedGraph }: RightPanelProps) {
-  const tabs: { id: TabType; label: string; icon: string }[] = [
-    { id: 'metrics', label: 'Metrics', icon: '📊' },
-    { id: 'visualization', label: 'Visualization', icon: '🔮' },
-    { id: 'maps', label: 'Maps', icon: '🗺️' },
+  const tabs: { id: TabType; label: string }[] = [
+    { id: 'metrics', label: 'Metrics' },
+    { id: 'visualization', label: 'Visualization' },
+    { id: 'maps', label: 'Maps' },
   ];
 
+  // Get graph data for visualization
+  const currentGraph = selectedGraph !== null 
+    ? results.perGraph.find(g => g.graph_index === selectedGraph)
+    : results.perGraph;
+
+  // Mock graph data - replace with actual data from your backend
+  const graphData = {
+    nodes: Array.from({ length: 10 }, (_, i) => ({ id: i, label: `${i}` })),
+    edges: [
+      { from: 0, to: 1, weight: 10 },
+      { from: 0, to: 2, weight: 15 },
+      { from: 1, to: 3, weight: 12 },
+      { from: 2, to: 3, weight: 10 },
+      { from: 3, to: 4, weight: 8 },
+      // Add more edges based on your actual graph structure
+    ]
+  };
+
+  // Mock coordinates - replace with actual data from your CSV
+  const coordinates = [
+    { id: 0, lat: 55.7558, lon: 37.6173, label: 'Node 0' },
+    { id: 1, lat: 55.7522, lon: 37.6156, label: 'Node 1' },
+    { id: 2, lat: 55.7489, lon: 37.6201, label: 'Node 2' },
+    // Add more coordinates from your data
+  ];
+
+  const classicalPath = [0, 1, 3, 4]; // Replace with actual path
+  const quantumPath = [0, 2, 3, 4]; // Replace with actual path
+
   return (
-    <div className="right-panel">
-      <div className="tabs-container">
-        {tabs.map((tab) => (
+    <div className="p-6">
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6 border-b pb-2" style={{ borderColor: 'rgba(255, 255, 255, 0.1)' }}>
+        {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => onTabChange(tab.id)}
-            className={`tab-button ${activeTab === tab.id ? 'active' : ''}`}
-          >
-            <span className="tab-icon">{tab.icon}</span>
-            <span className="tab-label">{tab.label}</span>
+            className={`px-6 py-3 font-medium transition-all relative ${
+              activeTab === tab.id ? '' : 'opacity-50 hover:opacity-75'
+            }`}>
+            {tab.label}
+            {activeTab === tab.id && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5"
+                style={{ background: 'var(--color-primary)' }}></div>
+            )}
           </button>
         ))}
       </div>
 
-      <div className="tab-content">
-        {activeTab === 'metrics' && (
-          <div className="metrics-tab">
-            <div className="table-container">
-              <table className="results-table">
-                <thead>
-                  <tr>
-                    <th>Graph</th>
-                    <th>Classical Time</th>
-                    <th>Quantum Time</th>
-                    <th>Speedup</th>
-                    <th>Classical Dist</th>
-                    <th>Quantum Dist</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {results.perGraph.map((g) => (
-                    <tr key={g.graph_index} className={selectedGraph === g.graph_index ? 'selected-row' : ''}>
-                      <td className="graph-id">
-                        <span className="badge">#{g.graph_index}</span>
-                      </td>
-                      <td>{typeof g.classical.enhanced.opt_time_ms === 'number' ? `${g.classical.enhanced.opt_time_ms.toFixed(0)}ms` : 'N/A'}</td>
-                      <td>{typeof g.quantum.enhanced.opt_time_ms === 'number' ? `${g.quantum.enhanced.opt_time_ms.toFixed(0)}ms` : 'N/A'}</td>
-                      <td>
-                        <span className={`speedup-value ${g.compare.quantum_speedup > 1 ? 'positive' : 'negative'}`}>
-                          {typeof g.compare.quantum_speedup === 'number' ? `${g.compare.quantum_speedup.toFixed(2)}x` : 'N/A'}
-                        </span>
-                      </td>
-                      <td>{typeof g.classical.enhanced.total_distance === 'number' ? g.classical.enhanced.total_distance.toFixed(1) : 'N/A'}</td>
-                      <td>{typeof g.quantum.enhanced.total_distance === 'number' ? g.quantum.enhanced.total_distance.toFixed(1) : 'N/A'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+      {/* Tab Content */}
+      {activeTab === 'metrics' && (
+        <div className="glass-effect rounded-xl p-6">
+          <h3 className="text-lg font-semibold mb-4">Detailed Metrics</h3>
+          {/* Metrics table here */}
+        </div>
+      )}
 
-        {activeTab === 'visualization' && (
-          <div className="visualization-tab">
-            <div className="info-card">
-              <div className="info-icon">🔮</div>
-              <h4>Interactive Visualization</h4>
-              <p>Install <code>vis-network</code> to enable interactive graph visualization with highlighted routes.</p>
-              <div className="code-snippet">
-                <code>npm install vis-network vis-data</code>
-              </div>
-            </div>
-          </div>
-        )}
+      {activeTab === 'visualization' && (
+        <GraphVisualization
+          graphData={graphData}
+          classicalPath={classicalPath}
+          quantumPath={quantumPath}
+        />
+      )}
 
-        {activeTab === 'maps' && (
-          <div className="maps-tab">
-            <div className="info-card">
-              <div className="info-icon">🗺️</div>
-              <h4>Yandex Maps Integration</h4>
-              <p>Add latitude/longitude columns to your CSV to display routes on Yandex Maps with real-time traffic data.</p>
-              <div className="example-section">
-                <h5>Example CSV format:</h5>
-                <div className="code-snippet">
-                  <code>
-                    node_id,latitude,longitude{`
-`}
-                    0,55.7558,37.6173{`
-`}
-                    1,55.7522,37.6156
-                  </code>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      {activeTab === 'maps' && (
+        <YandexMapsVisualization
+          apiKey="bbbcfa5a-fe28-4f09-aa62-dece34cbc32d"
+          coordinates={coordinates}
+          classicalRoute={classicalPath}
+          quantumRoute={quantumPath}
+        />
+      )}
     </div>
   );
 }
