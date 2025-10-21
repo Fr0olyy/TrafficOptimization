@@ -1,138 +1,345 @@
 #!/usr/bin/env python3
-import os, sys, json, argparse, importlib.util, io, csv, base64, time
+"""
+Quantum Traffic Optimization Runner With MIREA Quantum Integration
+"""
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+import sys
+import os
+import argparse
+import json
+import time
+import base64
+from typing import Dict, List, Tuple, Any
 
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+import numpy as np
 
-csv_mod = load_module("csv_parser_mod", os.path.join(BASE_DIR, "csv-parser.py"))
-opt_mod = load_module("traffic_optimizer_mod", os.path.join(BASE_DIR, "traffic-optimizer.py"))
-qubo_mod = load_module("qubo_formulator_mod", os.path.join(BASE_DIR, "qubo-formulator.py"))
-qasm_mod = load_module("qasm_exporter_mod", os.path.join(BASE_DIR, "qasm-exporter.py"))
+# Импорт локальных модулей
+from csv_parser import parse_dataset
+from traffic_optimizer import EnhancedTrafficOptimizer
+from qubo_formulator import QUBOIsingFormulator
+from qasm_exporter import OpenQASMExporter
 
-HackathonCSVParser = csv_mod.HackathonCSVParser
-EnhancedTrafficOptimizer = opt_mod.EnhancedTrafficOptimizer
-QUBOIsingFormulator = qubo_mod.QUBOIsingFormulator
-OpenQASMExporter = qasm_mod.OpenQASMExporter
+# Пытаемся импортировать MIREA адаптер
+try:
+    from mirea_quantum_adapter import MIREAQuantumAdapter
+    MIREA_AVAILABLE = True
+except ImportError:
+    MIREA_AVAILABLE = False
+    print("Warning: MIREA Quantum adapter not available", file=sys.stderr)
 
-def route_to_py(r): return [int(x) for x in r]
-def parse_indices(arg):
-    if not arg: return None
-    return [int(p.strip()) for p in str(arg).split(",") if p.strip()!=""]
 
-def build_csv(results) -> str:
-    import json as _json
-    buf = io.StringIO(); w = csv.writer(buf)
-    w.writerow(["graph_index","driver_index","route"])
-    for r in results:
-        gi_out = int(r["graph_index"])
-        for driver_idx, path in enumerate(r["routes_optimized"]):
-            w.writerow([gi_out, driver_idx, _json.dumps(path)])
-    return buf.getvalue()
+def parse_args():
+    """Парсинг аргументов командной строки"""
+    parser = argparse.ArgumentParser(
+        description="Quantum Traffic Optimization with MIREA Quantum Integration"
+    )
+    
+    parser.add_argument(
+        '--csv-file',
+        type=str,
+        required=True,
+        help='Path to CSV file with graph data'
+    )
+    
+    parser.add_argument(
+        '--output',
+        type=str,
+        default='results.json',
+        help='Output JSON file path (default: results.json)'
+    )
+    
+    parser.add_argument(
+        '--graph-index',
+        type=int,
+        default=None,
+        help='Process specific graph index only (default: all graphs)'
+    )
+    
+    parser.add_argument(
+        '--use-mirea',
+        action='store_true',
+        help='Use MIREA quantum backend if available'
+    )
+    
+    parser.add_argument(
+        '--p-layers',
+        type=int,
+        default=3,
+        help='Number of QAOA p-layers (default: 3)'
+    )
+    
+    parser.add_argument(
+        '--max-routes',
+        type=int,
+        default=None,
+        help='Maximum number of routes to process (default: all)'
+    )
+    
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Enable verbose output'
+    )
+    
+    return parser.parse_args()
 
-def process_one_graph(gi, g, qasm_version, qaoa_layers, max_qubits, max_steps, demo_batch, iterations, baseline_limit):
-    adj, routes = g["matrix"], g["routes"]
-    opt = EnhancedTrafficOptimizer()
 
-    routes_for_baseline = routes[:baseline_limit] if baseline_limit < len(routes) else routes
-    scale = len(routes) / max(1, len(routes_for_baseline))
-
-    t0 = time.perf_counter()
-    routes_greedy = opt.run_greedy_all(adj, routes_for_baseline)
-    greedy_ms = int((time.perf_counter() - t0) * 1000)
-    cost_greedy = float(opt.calculate_total_cost(routes_greedy, adj) * scale)
-
-    t1 = time.perf_counter()
-    routes_dijkstra = opt.run_dijkstra_all(adj, routes_for_baseline)
-    dijkstra_ms = int((time.perf_counter() - t1) * 1000)
-    cost_dijkstra = float(opt.calculate_total_cost(routes_dijkstra, adj) * scale)
-
-    t2 = time.perf_counter()
-    routes_opt = opt.solve_graph_with_congestion_awareness(adj, routes, iterations=iterations)
-    enhanced_ms = int((time.perf_counter() - t2) * 1000)
-    cost_enhanced = float(opt.calculate_total_cost(routes_opt, adj))
-
-    validation = opt.validate_routes(routes_opt, routes)
-
-    if demo_batch > 0:
-        veh = list(range(min(len(routes), demo_batch)))
-        form = QUBOIsingFormulator(adj, routes)
-        sub = form.create_subproblem(veh, max_qubits=max_qubits, max_steps=max_steps)
-        h, J, offset = form.qubo_to_ising(sub["qubo_matrix"])
-        exp = OpenQASMExporter(version=qasm_version)
-        code = exp.generate_qaoa_circuit(h_coeffs=h, J_coeffs=J, num_layers=qaoa_layers)
-        info = exp.get_circuit_info(code)
-        demo_vars = int(sub["num_variables"])
-    else:
-        code = ""
-        info = {"version": qasm_version, "total_lines": 0, "gate_count": 0, "qubit_count": 0, "parameter_count": 0}
-        demo_vars = 0
-
+def adjacency_matrix_to_graph(matrix: np.ndarray) -> Dict[str, Any]:
+    """
+    Преобразует матрицу смежности в граф
+    
+    Args:
+        matrix: numpy array размером NxN
+        
+    Returns:
+        Dict с ключами nodes, edges, adjacency
+    """
+    n = matrix.shape[0]
+    nodes = list(range(n))
+    edges = []
+    adjacency = {i: [] for i in range(n)}
+    
+    for i in range(n):
+        for j in range(n):
+            weight = matrix[i, j]
+            if weight > 0 and not np.isinf(weight) and not np.isnan(weight):
+                edges.append((i, j, float(weight)))
+                adjacency[i].append((j, float(weight)))
+    
     return {
-        "graph_index": int(gi),
-        "original_index": int(g.get("original_index", gi)),
-        "num_nodes": int(adj.shape[0]),
-        "num_vehicles": len(routes),
-        "routes_expected": [route_to_py(r) for r in routes],
-        "routes_optimized": [route_to_py(r) for r in routes_opt],
-        "validation": validation,
-        "total_cost": cost_enhanced,
-        "metrics": {
-            "greedy": {"total_cost": cost_greedy, "opt_time_ms": greedy_ms, "sampled_routes": len(routes_for_baseline)},
-            "dijkstra": {"total_cost": cost_dijkstra, "opt_time_ms": dijkstra_ms, "sampled_routes": len(routes_for_baseline)},
-            "enhanced": {"total_cost": cost_enhanced, "opt_time_ms": enhanced_ms, "iterations": iterations}
-        },
-        "demo_qubo_num_variables": demo_vars,
-        "demo_qasm_info": info,
-        "demo_qasm_code": code,
+        'nodes': nodes,
+        'edges': edges,
+        'adjacency': adjacency
     }
+
+
+def process_graph(
+    graph_idx: int,
+    adjacency_matrix: np.ndarray,
+    route_pairs: List[Tuple[int, int]],
+    args: argparse.Namespace
+) -> Dict[str, Any]:
+    """
+    Обработка одного графа
+    
+    Args:
+        graph_idx: Индекс графа
+        adjacency_matrix: Матрица смежности
+        route_pairs: Список пар (start, end) маршрутов
+        args: Аргументы командной строки
+        
+    Returns:
+        Dict с результатами оптимизации
+    """
+    print(f"\n{'='*80}", file=sys.stderr)
+    print(f"Processing Graph #{graph_idx}", file=sys.stderr)
+    print(f"{'='*80}", file=sys.stderr)
+    print(f"Matrix shape: {adjacency_matrix.shape}", file=sys.stderr)
+    print(f"Number of routes: {len(route_pairs)}", file=sys.stderr)
+    
+    # Конвертируем матрицу в граф
+    graph_data = adjacency_matrix_to_graph(adjacency_matrix)
+    
+    # Ограничиваем количество маршрутов если указано
+    if args.max_routes:
+        route_pairs = route_pairs[:args.max_routes]
+        print(f"Limited to {len(route_pairs)} routes", file=sys.stderr)
+    
+    # Создаём оптимизатор
+    optimizer = EnhancedTrafficOptimizer()
+    optimizer.load_graph_from_dict(graph_data)
+    
+    # Результаты для всех маршрутов
+    route_results = []
+    
+    for route_idx, (start, end) in enumerate(route_pairs):
+        print(f"\nRoute {route_idx + 1}/{len(route_pairs)}: {start} -> {end}", file=sys.stderr)
+        
+        try:
+            # Классическое решение (Dijkstra)
+            classical_result = optimizer.solve_classical(start, end)
+            
+            # Квантовое решение (QAOA)
+            quantum_result = optimizer.solve_quantum(
+                start, 
+                end,
+                p=args.p_layers
+            )
+            
+            # Сравнение решений
+            comparison = optimizer.compare_solutions(
+                classical_result,
+                quantum_result
+            )
+            
+            route_results.append({
+                'route_index': route_idx,
+                'start': start,
+                'end': end,
+                'classical': {
+                    'path': classical_result.get('path', []),
+                    'cost': classical_result.get('cost', None),
+                    'time': classical_result.get('time', None)
+                },
+                'quantum': {
+                    'path': quantum_result.get('path', []),
+                    'cost': quantum_result.get('cost', None),
+                    'time': quantum_result.get('time', None),
+                    'energy': quantum_result.get('energy', None)
+                },
+                'comparison': comparison
+            })
+            
+            if args.verbose:
+                print(f"  Classical: path={classical_result.get('path', [])} "
+                      f"cost={classical_result.get('cost', 'N/A')}", file=sys.stderr)
+                print(f"  Quantum: path={quantum_result.get('path', [])} "
+                      f"cost={quantum_result.get('cost', 'N/A')}", file=sys.stderr)
+            
+        except Exception as e:
+            print(f"  Error processing route: {e}", file=sys.stderr)
+            route_results.append({
+                'route_index': route_idx,
+                'start': start,
+                'end': end,
+                'error': str(e)
+            })
+    
+    # Агрегированная статистика
+    successful_routes = [r for r in route_results if 'error' not in r]
+    
+    if successful_routes:
+        classical_costs = [r['classical']['cost'] for r in successful_routes 
+                          if r['classical']['cost'] is not None]
+        quantum_costs = [r['quantum']['cost'] for r in successful_routes 
+                        if r['quantum']['cost'] is not None]
+        
+        stats = {
+            'total_routes': len(route_pairs),
+            'successful': len(successful_routes),
+            'failed': len(route_pairs) - len(successful_routes),
+            'average_classical_cost': float(np.mean(classical_costs)) if classical_costs else None,
+            'average_quantum_cost': float(np.mean(quantum_costs)) if quantum_costs else None,
+            'improvement': None
+        }
+        
+        if classical_costs and quantum_costs:
+            improvement = ((np.mean(classical_costs) - np.mean(quantum_costs)) / 
+                         np.mean(classical_costs) * 100)
+            stats['improvement'] = float(improvement)
+            print(f"\nAverage improvement: {improvement:.2f}%", file=sys.stderr)
+    else:
+        stats = {
+            'total_routes': len(route_pairs),
+            'successful': 0,
+            'failed': len(route_pairs)
+        }
+    
+    return {
+        'graph_index': graph_idx,
+        'stats': stats,
+        'routes': route_results
+    }
+
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--input", required=True)
-    ap.add_argument("--graph-index", default=None)
-    ap.add_argument("--version", default="3.0", choices=["2.0","3.0"])
-    ap.add_argument("--layers", type=int, default=2)
-    ap.add_argument("--max-qubits", type=int, default=25)
-    ap.add_argument("--max-steps", type=int, default=8)
-    ap.add_argument("--demo-batch", type=int, default=0)
-    ap.add_argument("--iterations", type=int, default=1)
-    ap.add_argument("--baseline-limit", type=int, default=100)
-    args = ap.parse_args()
-
-    parser = HackathonCSVParser()
-    graphs = parser.parse_delimited_file(args.input)
-
-    available = sorted(graphs.keys())
-    selected = parse_indices(args.graph_index)
-    indices = available if selected is None else selected
-    missing = [i for i in indices if i not in graphs]
-    if missing:
-        sys.stdout.write(json.dumps({"ok": False, "error": "graph_index not found", "available_graph_indices": available}, ensure_ascii=False)); sys.stdout.flush(); return
-
-    results = [
-        process_one_graph(gi, graphs[gi], args.version, args.layers, args.max_qubits, args.max_steps,
-                          args.demo_batch, args.iterations, args.baseline_limit)
-        for gi in indices
-    ]
-
-    csv_text = build_csv(results)
-    out = {
-        "ok": True, "mode": "quantum",
-        "file": os.path.basename(args.input),
-        "graphs_count": len(indices),
-        "available_graph_indices": available,
-        "processed_graph_indices": indices,
-        "results": results,
-        "csv_filename": f"routes_{os.path.basename(args.input)}.csv",
-        "csv_base64": base64.b64encode(csv_text.encode("utf-8")).decode("ascii"),
+    """Главная функция"""
+    args = parse_args()
+    
+    print("="*80, file=sys.stderr)
+    print("Quantum Traffic Optimization Runner With MIREA Quantum Integration", file=sys.stderr)
+    print("="*80, file=sys.stderr)
+    
+    # Проверяем доступность MIREA
+    if args.use_mirea and not MIREA_AVAILABLE:
+        print("ERROR: --use-mirea specified but MIREA adapter not available", file=sys.stderr)
+        sys.exit(1)
+    
+    # Парсим датасет
+    print(f"\nParsing dataset: {args.csv_file}", file=sys.stderr)
+    
+    try:
+        graphs_dict = parse_dataset(args.csv_file)
+        print(f"✓ Loaded {len(graphs_dict)} graph(s)", file=sys.stderr)
+    except Exception as e:
+        print(f"ERROR parsing CSV: {e}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Обрабатываем графы
+    results = []
+    
+    # Если указан конкретный граф
+    if args.graph_index is not None:
+        if args.graph_index not in graphs_dict:
+            print(f"ERROR: Graph index {args.graph_index} not found", file=sys.stderr)
+            print(f"Available indices: {list(graphs_dict.keys())}", file=sys.stderr)
+            sys.exit(1)
+        
+        graph_data = graphs_dict[args.graph_index]
+        result = process_graph(
+            graph_idx=graph_data.get('original_index', args.graph_index),
+            adjacency_matrix=graph_data['matrix'],
+            route_pairs=graph_data['routes'],
+            args=args
+        )
+        results.append(result)
+    
+    # Иначе обрабатываем все графы
+    else:
+        for row_order, graph_data in graphs_dict.items():
+            graph_idx = graph_data.get('original_index', row_order)
+            
+            result = process_graph(
+                graph_idx=graph_idx,
+                adjacency_matrix=graph_data['matrix'],
+                route_pairs=graph_data['routes'],
+                args=args
+            )
+            results.append(result)
+    
+    # Конвертируем numpy типы в Python типы
+    def convert_numpy(obj):
+        if isinstance(obj, dict):
+            return {k: convert_numpy(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [convert_numpy(i) for i in obj]
+        elif isinstance(obj, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, np.float64, np.float32)):
+            return float(obj)
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+    
+    results = convert_numpy(results)
+    
+    # Формат совместимый с main.go
+    output_data = {
+        'ok': True,
+        'mode': 'quantum',
+        'file': os.path.basename(args.csv_file),
+        'results': results,
+        'summary': {
+            'total_graphs': len(results),
+            'p_layers': int(args.p_layers),
+            'max_routes': int(args.max_routes) if args.max_routes else None,
+            'use_mirea': bool(args.use_mirea)
+        },
+        'csv_base64': '',
+        'csv_filename': 'quantum_results.csv'
     }
-    sys.stdout.write(json.dumps(out, ensure_ascii=False)); sys.stdout.flush()
+    
+    print(f"\n{'='*80}", file=sys.stderr)
+    print(f"Results ready: {len(results)} graphs processed", file=sys.stderr)
+    print(f"{'='*80}", file=sys.stderr)
+    
+    # ТОЛЬКО JSON в stdout без лишнего текста
+    print(json.dumps(output_data))
+    
+    return 0
 
-if __name__ == "__main__":
-    main()
+
+if __name__ == '__main__':
+    sys.exit(main())

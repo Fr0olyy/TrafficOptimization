@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from typing import List, Tuple, Dict, Any
 
+
 class HackathonCSVParser:
     def __init__(self):
         self.graphs_data: Dict[int, Dict[str, Any]] = {}
@@ -85,3 +86,25 @@ class HackathonCSVParser:
         for i, (s, t) in enumerate(routes):
             if not (0 <= s < n and 0 <= t < n):
                 raise ValueError(f"Graph {graph_index}: bad route {i} -> ({s},{t})")
+
+
+# ============================================================
+# WRAPPER ФУНКЦИЯ ДЛЯ ИМПОРТА В runner.py
+# ============================================================
+
+def parse_dataset(file_path: str) -> Dict[int, Dict[str, Any]]:
+    """
+    Wrapper функция для парсинга CSV файла
+    
+    Args:
+        file_path: Путь к CSV файлу
+        
+    Returns:
+        Dict с графами: {graph_index: {matrix, routes, ...}}
+    """
+    parser = HackathonCSVParser()
+    return parser.parse_csv_file(file_path)
+
+
+# Экспортируем также класс для прямого использования
+__all__ = ['HackathonCSVParser', 'parse_dataset']

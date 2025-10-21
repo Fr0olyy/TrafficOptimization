@@ -1,0 +1,48 @@
+services:
+  quantum-optimizer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: quantum-traffic-optimizer:latest
+    container_name: quantum-optimizer
+
+    ports:
+      - "9000:9000"
+
+    environment:
+      - PORT=9000
+      - WEB_DIR=/app/web
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - MIREA_EMAIL=${MIREA_EMAIL}
+      - MIREA_PASSWORD=${MIREA_PASSWORD}
+      - MIREA_SHOTS=${MIREA_SHOTS:-1024}
+      - MIREA_TIMEOUT=${MIREA_TIMEOUT:-300}
+      - DEFAULT_QAOA_LAYERS=${DEFAULT_QAOA_LAYERS:-2}
+      - DEFAULT_MAX_QUBITS=${DEFAULT_MAX_QUBITS:-25}
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+        reservations:
+          cpus: "2"
+          memory: 2G
+
+    networks:
+      - quantum-net
+
+networks:
+  quantum-net:
+    driver: bridge

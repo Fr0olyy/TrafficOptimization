@@ -10,8 +10,8 @@ def load_module(name, path):
     spec.loader.exec_module(mod)
     return mod
 
-csv_mod = load_module("csv_parser_mod", os.path.join(BASE_DIR, "csv-parser.py"))
-opt_mod = load_module("traffic_optimizer_mod", os.path.join(BASE_DIR, "traffic-optimizer.py"))
+csv_mod = load_module("csv_parser_mod", os.path.join(BASE_DIR, "csv_parser.py"))
+opt_mod = load_module("traffic_optimizer_mod", os.path.join(BASE_DIR, "traffic_optimizer.py"))
 
 HackathonCSVParser = csv_mod.HackathonCSVParser
 EnhancedTrafficOptimizer = opt_mod.EnhancedTrafficOptimizer

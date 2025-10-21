@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+env/
+
+# Go
+*.exe
+*.test
+*.out
+vendor/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+docker-compose.yml
+
+# Docs
+*.md
+*.pdf
+docs/
+
+# Test data
+*.csv
+*.txt
+test_data/

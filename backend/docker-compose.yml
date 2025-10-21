@@ -1,9 +1,0 @@
-services:
-  web:
-    build: .
-    image: traffic-qaoa:latest
-    ports:
-      - "9000:2411"
-    environment:
-      - PORT=2411
-    restart: unless-stopped
