@@ -50,8 +50,8 @@ func main() {
 	})
 
 	// API
-	mux.HandleFunc("/process", process)   // POST: принимает файл и параметры, возвращает JSON
-	mux.HandleFunc("/download", download) // GET: скачивание CSV по id
+	mux.HandleFunc("/process", process)
+	mux.HandleFunc("/download", download)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// CORS
@@ -96,25 +96,16 @@ func process(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Получаем параметры из формы
+	// Получаем параметры
 	iterations := getIntParam(r, "iterations", 1)
 	baselineLimit := getIntParam(r, "baseline_limit", 100)
-
 	qaoaLayers := getIntParam(r, "layers", 2)
 	maxQubits := getIntParam(r, "max_qubits", 25)
-
-	// MIREA параметры
 	useMirea := r.FormValue("use_mirea") == "true"
-	mireaEmail := r.FormValue("mirea_email")
-
-	mireaShots := getIntParam(r, "mirea_shots", 1024)
 
 	log.Printf("Processing file: %s (size: %d bytes)", header.Filename, header.Size)
 	log.Printf("Parameters: iterations=%d, baseline=%d, layers=%d, qubits=%d",
 		iterations, baselineLimit, qaoaLayers, maxQubits)
-	if useMirea {
-		log.Printf("MIREA Quantum: enabled (email=%s, shots=%d)", mireaEmail, mireaShots)
-	}
 
 	// Сохраняем файл
 	tmpDir, err := os.MkdirTemp("", "upload-*")
@@ -149,7 +140,7 @@ func process(w http.ResponseWriter, r *http.Request) {
 		"--baseline-limit", itoa(baselineLimit),
 	}
 
-	// Quantum runner с правильными аргументами
+	// Quantum runner
 	runnerQuant := filepath.Join("py", "runner.py")
 	argsQuant := []string{
 		runnerQuant,
@@ -159,7 +150,6 @@ func process(w http.ResponseWriter, r *http.Request) {
 		"--p-layers", itoa(qaoaLayers),
 	}
 
-	// Добавляем MIREA параметры если включено
 	if useMirea {
 		argsQuant = append(argsQuant, "--use-mirea")
 	}
@@ -203,7 +193,7 @@ func process(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Сохраняем CSV в хранилище
+	// Сохраняем CSV
 	var idClass, idQuant string
 	if rClass.CSVBase64 != "" {
 		b, _ := base64.StdEncoding.DecodeString(rClass.CSVBase64)
@@ -224,42 +214,61 @@ func process(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Saved quantum CSV: %s (id=%s)", rQuant.CSVName, idQuant)
 	}
 
-	// Формируем perGraph сравнение
+	// Формируем perGraph с поддержкой новой структуры quantum results
 	perGraph := make([]map[string]any, 0, min(len(rClass.Results), len(rQuant.Results)))
 	for i := 0; i < min(len(rClass.Results), len(rQuant.Results)); i++ {
 		c := rClass.Results[i]
 		q := rQuant.Results[i]
 
+		// Classical метрики
 		cm, ok1 := c["metrics"].(map[string]any)
-		qm, ok2 := q["metrics"].(map[string]any)
-		if !ok1 || !ok2 {
-			log.Printf("Warning: skipping graph %d - invalid metrics format", i)
+		if !ok1 {
+			log.Printf("Warning: skipping graph %d - no classical metrics", i)
 			continue
 		}
 
 		ce, ok1 := cm["enhanced"].(map[string]any)
-		qe, ok2 := qm["enhanced"].(map[string]any)
-		if !ok1 || !ok2 {
-			log.Printf("Warning: skipping graph %d - invalid enhanced format", i)
+		if !ok1 {
+			log.Printf("Warning: skipping graph %d - no classical enhanced", i)
+			continue
+		}
+
+		// Quantum stats (новая структура)
+		qStats, ok2 := q["stats"].(map[string]any)
+		if !ok2 {
+			log.Printf("Warning: skipping graph %d - no quantum stats", i)
 			continue
 		}
 
 		ceMs := intFromAny(ce["opt_time_ms"])
-		qeMs := intFromAny(qe["opt_time_ms"])
+
+		// Вычисляем quantum время из routes
+		qRoutes, _ := q["routes"].([]any)
+		var qTimeTotal float64
+		for _, route := range qRoutes {
+			if rm, ok := route.(map[string]any); ok {
+				if qm, ok := rm["quantum"].(map[string]any); ok {
+					qTimeTotal += floatFromAny(qm["time"])
+				}
+			}
+		}
+		qeMs := int(qTimeTotal)
 
 		graphData := map[string]any{
-			"graph_index": c["graph_index"],
+			"graph_index": q["graph_index"],
 			"classical":   cm,
-			"quantum":     qm,
+			"quantum": map[string]any{
+				"enhanced": map[string]any{
+					"opt_time_ms":       qeMs,
+					"total_routes":      intFromAny(qStats["total_routes"]),
+					"successful_routes": intFromAny(qStats["successful"]),
+					"average_cost":      floatFromAny(qStats["average_quantum_cost"]),
+				},
+			},
 			"compare": map[string]any{
 				"delta_ms":        qeMs - ceMs,
 				"quantum_speedup": speedup(ceMs, qeMs),
 			},
-		}
-
-		// Добавляем MIREA результаты если есть
-		if mireaExec, ok := q["mirea_execution"].(map[string]any); ok {
-			graphData["mirea_execution"] = mireaExec
 		}
 
 		perGraph = append(perGraph, graphData)
@@ -313,14 +322,12 @@ func runPython(ctx context.Context, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "python3", args...)
 	cmd.Env = os.Environ()
 
-	// Разделяем stdout и stderr
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
 
-	// Логируем stderr для отладки (не мешает JSON)
 	if stderr.Len() > 0 {
 		log.Printf("Python stderr:\n%s", stderr.String())
 	}
@@ -334,19 +341,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// Вспомогательные функции
 func getIntParam(r *http.Request, key string, def int) int {
 	if val := r.FormValue(key); val != "" {
 		if i, err := strconv.Atoi(val); err == nil {
 			return i
 		}
-	}
-	return def
-}
-
-func getStringParam(r *http.Request, key string, def string) string {
-	if val := r.FormValue(key); val != "" {
-		return val
 	}
 	return def
 }
@@ -368,6 +367,24 @@ func intFromAny(a any) int {
 	case json.Number:
 		i, _ := t.Int64()
 		return int(i)
+	default:
+		return 0
+	}
+}
+
+func floatFromAny(a any) float64 {
+	switch t := a.(type) {
+	case float64:
+		return t
+	case float32:
+		return float64(t)
+	case int:
+		return float64(t)
+	case int64:
+		return float64(t)
+	case json.Number:
+		f, _ := t.Float64()
+		return f
 	default:
 		return 0
 	}

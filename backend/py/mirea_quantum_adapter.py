@@ -15,7 +15,7 @@ import uuid
 class MIREAQuantumAdapter:
     """Адаптер для работы с MIREA Quantum API"""
     
-    def __init__(self, email: str, password: str, base_url: str = "https://quantum.mirea.ru"):
+    def __init__(self, email: str, password: str, base_url: str = "https://mireatom.mirea.ru/nestor-team/circuit"):
         """
         Инициализация адаптера
         

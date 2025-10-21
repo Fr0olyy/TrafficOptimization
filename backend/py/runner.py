@@ -237,9 +237,19 @@ def process_graph(
     
     return {
         'graph_index': graph_idx,
+        'metrics': {
+            'enhanced': {
+                'total_routes': stats['total_routes'],
+                'successful_routes': stats['successful'],
+                'failed_routes': stats['failed'],
+                'average_cost': stats.get('average_quantum_cost', 0),
+                'opt_time_ms': sum(r['quantum']['time'] for r in successful_routes) if successful_routes else 0
+            }
+        },
         'stats': stats,
         'routes': route_results
     }
+
 
 
 def main():
