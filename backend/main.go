@@ -22,7 +22,7 @@ type csvRecord struct {
 	Data []byte
 }
 
-var store sync.Map // id -> csvRecord
+var store sync.Map
 
 func getenv(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -36,7 +36,6 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// Статика для фронтенда
 	webDir := getenv("WEB_DIR", "web")
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -49,12 +48,10 @@ func main() {
 		http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
 	})
 
-	// API
 	mux.HandleFunc("/process", process)
 	mux.HandleFunc("/download", download)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// CORS
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET")
@@ -96,7 +93,6 @@ func process(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Получаем параметры
 	iterations := getIntParam(r, "iterations", 1)
 	baselineLimit := getIntParam(r, "baseline_limit", 100)
 	qaoaLayers := getIntParam(r, "layers", 2)
@@ -106,8 +102,10 @@ func process(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Processing file: %s (size: %d bytes)", header.Filename, header.Size)
 	log.Printf("Parameters: iterations=%d, baseline=%d, layers=%d, qubits=%d",
 		iterations, baselineLimit, qaoaLayers, maxQubits)
+	if useMirea {
+		log.Printf("MIREA Quantum: enabled")
+	}
 
-	// Сохраняем файл
 	tmpDir, err := os.MkdirTemp("", "upload-*")
 	if err != nil {
 		http.Error(w, "temp dir error: "+err.Error(), http.StatusInternalServerError)
@@ -131,7 +129,6 @@ func process(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	// Classical runner
 	runnerClass := filepath.Join("py", "runner_classical.py")
 	argsClass := []string{
 		runnerClass,
@@ -140,7 +137,6 @@ func process(w http.ResponseWriter, r *http.Request) {
 		"--baseline-limit", itoa(baselineLimit),
 	}
 
-	// Quantum runner
 	runnerQuant := filepath.Join("py", "runner.py")
 	argsQuant := []string{
 		runnerQuant,
@@ -152,6 +148,22 @@ func process(w http.ResponseWriter, r *http.Request) {
 
 	if useMirea {
 		argsQuant = append(argsQuant, "--use-mirea")
+
+		mireaEmail := r.FormValue("mirea_email")
+		mireaPassword := r.FormValue("mirea_password")
+		mireaShots := getIntParam(r, "mirea_shots", 1024)
+		mireaTimeout := getIntParam(r, "mirea_timeout", 300)
+
+		if mireaEmail != "" && mireaPassword != "" {
+			argsQuant = append(argsQuant, "--mirea-email", mireaEmail)
+			argsQuant = append(argsQuant, "--mirea-password", mireaPassword)
+			argsQuant = append(argsQuant, "--mirea-shots", itoa(mireaShots))
+			argsQuant = append(argsQuant, "--mirea-timeout", itoa(mireaTimeout))
+			log.Printf("MIREA params: email=%s, shots=%d, timeout=%d",
+				mireaEmail, mireaShots, mireaTimeout)
+		} else {
+			log.Println("Warning: MIREA enabled but credentials not provided")
+		}
 	}
 
 	type resp struct {
@@ -193,7 +205,6 @@ func process(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Сохраняем CSV
 	var idClass, idQuant string
 	if rClass.CSVBase64 != "" {
 		b, _ := base64.StdEncoding.DecodeString(rClass.CSVBase64)
@@ -214,13 +225,11 @@ func process(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Saved quantum CSV: %s (id=%s)", rQuant.CSVName, idQuant)
 	}
 
-	// Формируем perGraph с поддержкой новой структуры quantum results
 	perGraph := make([]map[string]any, 0, min(len(rClass.Results), len(rQuant.Results)))
 	for i := 0; i < min(len(rClass.Results), len(rQuant.Results)); i++ {
 		c := rClass.Results[i]
 		q := rQuant.Results[i]
 
-		// Classical метрики
 		cm, ok1 := c["metrics"].(map[string]any)
 		if !ok1 {
 			log.Printf("Warning: skipping graph %d - no classical metrics", i)
@@ -233,7 +242,6 @@ func process(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Quantum stats (новая структура)
 		qStats, ok2 := q["stats"].(map[string]any)
 		if !ok2 {
 			log.Printf("Warning: skipping graph %d - no quantum stats", i)
@@ -242,7 +250,6 @@ func process(w http.ResponseWriter, r *http.Request) {
 
 		ceMs := intFromAny(ce["opt_time_ms"])
 
-		// Вычисляем quantum время из routes
 		qRoutes, _ := q["routes"].([]any)
 		var qTimeTotal float64
 		for _, route := range qRoutes {
@@ -252,7 +259,7 @@ func process(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		qeMs := int(qTimeTotal)
+		qeMs := int(qTimeTotal * 1000)
 
 		graphData := map[string]any{
 			"graph_index": q["graph_index"],
@@ -271,13 +278,17 @@ func process(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 
+		if mireaExec, ok := q["mirea_execution"].(map[string]any); ok {
+			graphData["mirea_execution"] = mireaExec
+			log.Printf("Graph %d: MIREA execution included", i)
+		}
+
 		perGraph = append(perGraph, graphData)
 	}
 
 	elapsed := time.Since(start).Milliseconds()
 	log.Printf("Processing completed in %dms", elapsed)
 
-	// Финальный ответ
 	out := map[string]any{
 		"ok":       true,
 		"perGraph": perGraph,

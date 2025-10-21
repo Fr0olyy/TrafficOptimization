@@ -1,399 +1,380 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-Адаптер для интеграции с MIREA Quantum Platform (quantum.mirea.ru)
-Конвертирует QAOA параметры в формат API платформы и отправляет схемы на выполнение
+MIREA Quantum API Adapter
+Интеграция с квантовым компьютером MIREA для выполнения QAOA схем
 """
 
 import requests
-import json
+import base64
 import time
-from typing import Dict, List, Tuple, Optional
+import logging
+from typing import Dict, List, Any, Optional
+import json
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 class MIREAQuantumAdapter:
     """Адаптер для работы с MIREA Quantum API"""
     
-    def __init__(self, email: str, password: str, base_url: str = "https://mireatom.mirea.ru/nestor-team/circuit"):
+    def __init__(
+        self, 
+        email: str, 
+        password: str,
+        api_url: str = "https://api.mirea-quantum.ru/nestor-team/circuit/api",  
+        timeout: int = 300
+    ):
+
         """
         Инициализация адаптера
         
         Args:
-            email: Email для авторизации на платформе
-            password: Пароль для авторизации
-            base_url: Базовый URL API (по умолчанию quantum.mirea.ru)
+            email: Email для аутентификации
+            password: Пароль
+            api_url: URL MIREA Quantum API
+            timeout: Таймаут запросов в секундах
         """
-        self.base_url = base_url
-        self.auth = (email, password)
+        self.email = email
+        self.password = password
+        self.api_url = api_url.rstrip('/')
+        self.timeout = timeout
+        self.auth_token = None
         self.session = requests.Session()
-        self.session.auth = self.auth
-        
-    def _generate_unique_id(self, prefix: str = "") -> str:
-        """Генерирует уникальный ID для элемента схемы"""
-        return f"{prefix}{uuid.uuid4().hex[:16]}"
     
-    def _create_gate_element(self, gate_type: str, gate_id: Optional[str] = None, 
-                           params: Optional[List] = None) -> Dict:
+    def authenticate(self) -> bool:
         """
-        Создает объект элемента (гейта) в формате MIREA Quantum
+        Аутентификация в MIREA API через Basic Auth
+        """
+        try:
+            auth_str = f"{self.email}:{self.password}"
+            auth_bytes = base64.b64encode(auth_str.encode('utf-8'))
+            auth_header = f"Basic {auth_bytes.decode('utf-8')}"
+        
+            headers = {
+                'Authorization': auth_header,
+                'Content-Type': 'application/json'
+            }
+        
+            logger.info(f"Authenticating with MIREA API: {self.api_url}")
+        
+            # MIREA не требует отдельного /auth endpoint
+            # Авторизация проверяется при каждом запросе
+            self.auth_token = auth_header  # Используем Basic Auth напрямую
+            logger.info("✓ MIREA credentials configured")
+            return True
+        
+        except Exception as e:
+            logger.error(f"MIREA authentication error: {e}")
+            return False
+    
+    def execute_circuit(
+        self, 
+        qasm_circuit: str, 
+        shots: int = 1024
+    ) -> Dict[str, Any]:
+        """Выполняет квантовую схему на MIREA"""
+    
+        try:
+            # Конвертируем QASM в формат MIREA
+            circuit_json = self.qasm_to_mirea_format(qasm_circuit)
+        
+            # Формируем payload согласно документации
+            payload = {
+                "elementsObject": circuit_json['elements'],
+                "actualHistoryMap": circuit_json['history'],
+                "launch": shots
+            }
+        
+            headers = {
+                'Authorization': self.auth_token,  # Basic Auth
+                'Content-Type': 'application/json'
+            }
+        
+            logger.info(f"Executing circuit on MIREA (shots={shots})")
+            logger.debug(f"Circuit: {len(circuit_json['elements'])} gates")
+        
+            # Отправляем POST на /circuit/api
+            start_time = time.time()
+            response = self.session.post(
+                self.api_url,  # Уже содержит /circuit/api
+                json=payload,
+                headers=headers,
+                timeout=self.timeout
+            )
+            elapsed = time.time() - start_time
+        
+            if response.status_code == 200:
+                result = response.json()
+            
+                # Проверяем формат ответа
+                if result.get('status') == True:
+                    logger.info(f"✓ MIREA execution completed in {elapsed:.2f}s")
+                
+                    return {
+                        'success': True,
+                        'measurements': result.get('data', {}),
+                        'execution_time': elapsed,
+                        'shots': shots,
+                        'raw_response': result
+                    }
+                elif result.get('status') == 'email':
+                    logger.warning("MIREA: Results will be sent via email (long queue)")
+                    return {
+                        'success': False,
+                        'error': 'Results queued - will be sent via email',
+                        'message': result.get('text')
+                    }
+                else:
+                    error_msg = result.get('error', 'Unknown error')
+                    logger.error(f"MIREA execution failed: {error_msg}")
+                    return {
+                        'success': False,
+                        'error': error_msg
+                    }
+            else:
+                logger.error(f"MIREA HTTP error: {response.status_code}")
+                return {
+                    'success': False,
+                    'error': f"HTTP {response.status_code}: {response.text}"
+                }
+            
+        except Exception as e:
+            logger.error(f"MIREA execution error: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    
+    def qasm_to_mirea_format(self, qasm_circuit: str) -> Dict[str, Any]:
+        """
+        Конвертирует OpenQASM схему в формат MIREA API
         
         Args:
-            gate_type: Тип гейта (H, X, RZ, CONTROL, MEASUREMENT и т.д.)
-            gate_id: Уникальный ID элемента
-            params: Параметры гейта (для параметризованных гейтов)
+            qasm_circuit: OpenQASM код
             
         Returns:
-            Словарь с описанием элемента
-        """
-        if gate_id is None:
-            gate_id = self._generate_unique_id(f"{gate_type.lower()}_")
-            
-        element = {
-            "id": gate_id,
-            "title": gate_type,
-            "params": params,
-            "error": None,
-            "body": None,
-            "idGate": None
-        }
-        
-        # Определяем тип элемента
-        if gate_type in ["H", "X", "Y", "Z", "I", "S", "T"]:
-            element["type"] = "base"
-        elif gate_type in ["RX", "RY", "RZ", "U1", "U2", "U3"]:
-            element["type"] = "params"
-        elif gate_type in ["CONTROL", "MEASUREMENT", "SWAP", "BARRIER"]:
-            element["type"] = "auxiliary"
-        else:
-            element["type"] = "custom"
-            
-        return element
-    
-    def _create_rotation_params(self, angle: float, param_name: str = "angle") -> List[Dict]:
-        """
-        Создает параметры для вращательных гейтов
-        
-        Args:
-            angle: Угол вращения в радианах
-            param_name: Название параметра
-            
-        Returns:
-            Список параметров в формате MIREA Quantum
-        """
-        return [{
-            "key": param_name,
-            "title": "Угол поворота",
-            "manipulation": None,
-            "value": [{
-                "title": "Угол",
-                "key": "angle1",
-                "types": [{
-                    "input": "input",
-                    "type": "number",
-                    "key": "input-number",
-                    "title": "Радианы",
-                    "data": round(angle, 6),
-                    "step": 0.01,
-                    "decimalDigits": 6
-                }],
-                "data": "input-number"
-            }]
-        }]
-    
-    def generate_qaoa_circuit_config(self, n_qubits: int, 
-                                     h: Dict[int, float], 
-                                     J: Dict[Tuple[int, int], float],
-                                     gamma: float, 
-                                     beta: float,
-                                     shots: int = 1024) -> Dict:
-        """
-        Генерирует конфигурацию QAOA схемы для одного слоя
-        
-        Args:
-            n_qubits: Количество кубитов
-            h: Локальные поля Изинг-модели {qubit_idx: field_value}
-            J: Парные взаимодействия {(i,j): coupling_value}
-            gamma: Параметр cost Hamiltonian
-            beta: Параметр mixer Hamiltonian
-            shots: Количество измерений (запусков)
-            
-        Returns:
-            Конфигурация в формате MIREA Quantum API
+            Dict с elementsObject и actualHistoryMap
         """
         elements = {}
-        history_map = [[] for _ in range(n_qubits)]
+        history = []
         
-        # ===== Слой 1: Начальная суперпозиция =====
-        # Применяем H ко всем кубитам
-        for q in range(n_qubits):
-            elem_id = self._generate_unique_id(f"h_init_{q}_")
-            element = self._create_gate_element("H", elem_id)
-            elements[elem_id] = element
-            history_map[q].append(elem_id)
+        # Парсим QASM построчно
+        lines = qasm_circuit.strip().split('\n')
+        qubit_count = 0
+        column = 0
         
-        # Выравниваем все строки
-        self._align_history_map(history_map)
-        
-        # ===== Слой 2: Cost Hamiltonian (Problem Layer) =====
-        # 2a. Однокубитные Z-вращения для локальных полей h_i
-        for qubit_idx, h_value in sorted(h.items()):
-            if abs(h_value) > 1e-9:
-                angle = 2 * gamma * h_value
-                elem_id = self._generate_unique_id(f"rz_h_{qubit_idx}_")
-                params = self._create_rotation_params(angle, "lambda")
-                element = self._create_gate_element("RZ", elem_id, params)
-                elements[elem_id] = element
-                history_map[qubit_idx].append(elem_id)
-        
-        self._align_history_map(history_map)
-        
-        # 2b. Двухкубитные ZZ-взаимодействия для J_ij
-        # Реализуем через декомпозицию: CNOT - RZ - CNOT
-        for (i, j), J_value in sorted(J.items()):
-            if abs(J_value) > 1e-9:
-                # Первый CNOT: контроль на i, цель на j
-                ctrl_id1 = self._generate_unique_id(f"cnot1_ctrl_{i}_{j}_")
-                tgt_id1 = self._generate_unique_id(f"cnot1_tgt_{i}_{j}_")
+        for line in lines:
+            line = line.strip()
+            
+            # Пропускаем комментарии и директивы
+            if not line or line.startswith('//') or line.startswith('OPENQASM') or line.startswith('include'):
+                continue
+            
+            # Определяем количество кубитов
+            if line.startswith('qreg'):
+                # qreg q[5];
+                parts = line.split('[')
+                if len(parts) > 1:
+                    qubit_count = int(parts[1].split(']')[0])
+                continue
+            
+            if line.startswith('creg'):
+                continue
+            
+            # Парсим гейты
+            gate_info = self.parse_qasm_gate(line, column)
+            if gate_info:
+                gate_id = str(uuid.uuid4())
                 
-                elements[ctrl_id1] = self._create_gate_element("CONTROL", ctrl_id1)
-                elements[tgt_id1] = self._create_gate_element("X", tgt_id1)
+                elements[gate_id] = {
+                    "id": gate_id,
+                    "title": gate_info['title'],
+                    "type": gate_info['type'],
+                    "params": gate_info.get('params'),
+                    "error": None,
+                    "body": None,
+                    "idGate": None
+                }
                 
-                history_map[i].append(ctrl_id1)
-                history_map[j].append(tgt_id1)
-                self._align_history_map(history_map)
+                # Добавляем в историю
+                if gate_info.get('qubits'):
+                    history.append([gate_id] + gate_info['qubits'])
                 
-                # RZ на целевом кубите j
-                angle = 2 * gamma * J_value
-                rz_id = self._generate_unique_id(f"rz_J_{i}_{j}_")
-                params = self._create_rotation_params(angle, "lambda")
-                element = self._create_gate_element("RZ", rz_id, params)
-                elements[rz_id] = element
-                history_map[j].append(rz_id)
-                self._align_history_map(history_map)
-                
-                # Второй CNOT (обратный)
-                ctrl_id2 = self._generate_unique_id(f"cnot2_ctrl_{i}_{j}_")
-                tgt_id2 = self._generate_unique_id(f"cnot2_tgt_{i}_{j}_")
-                
-                elements[ctrl_id2] = self._create_gate_element("CONTROL", ctrl_id2)
-                elements[tgt_id2] = self._create_gate_element("X", tgt_id2)
-                
-                history_map[i].append(ctrl_id2)
-                history_map[j].append(tgt_id2)
-                self._align_history_map(history_map)
+                column += 1
         
-        # ===== Слой 3: Mixer Hamiltonian =====
-        # Применяем RX(2*beta) ко всем кубитам
-        for q in range(n_qubits):
-            angle = 2 * beta
-            elem_id = self._generate_unique_id(f"rx_mixer_{q}_")
-            params = self._create_rotation_params(angle, "theta")
-            element = self._create_gate_element("RX", elem_id, params)
-            elements[elem_id] = element
-            history_map[q].append(elem_id)
-        
-        self._align_history_map(history_map)
-        
-        # ===== Слой 4: Измерения =====
-        for q in range(n_qubits):
-            meas_id = self._generate_unique_id(f"meas_{q}_")
-            element = self._create_gate_element("MEASUREMENT", meas_id)
-            elements[meas_id] = element
-            history_map[q].append(meas_id)
-        
-        self._align_history_map(history_map)
-        
-        # Добавляем блокировку после измерений (обязательно по спецификации)
-        for q in range(n_qubits):
-            history_map[q].append("block")
+        logger.debug(f"Converted QASM: {len(elements)} gates, {qubit_count} qubits")
         
         return {
-            "elementsObject": elements,
-            "actualHistoryMap": history_map,
-            "launch": shots
+            'elements': elements,
+            'history': history,
+            'qubit_count': qubit_count
         }
     
-    def _align_history_map(self, history_map: List[List[str]]) -> None:
+    def parse_qasm_gate(self, line: str, column: int) -> Optional[Dict[str, Any]]:
         """
-        Выравнивает все строки history_map до одинаковой длины,
-        заполняя пустые места "none"
+        Парсит одну строку QASM с гейтом
         
         Args:
-            history_map: Двумерный массив строк схемы (модифицируется на месте)
-        """
-        if not history_map:
-            return
-        
-        max_len = max(len(row) for row in history_map)
-        for row in history_map:
-            while len(row) < max_len:
-                row.append("none")
-    
-    def submit_circuit(self, config: Dict, timeout: int = 300) -> Dict:
-        """
-        Отправляет квантовую схему на выполнение через MIREA Quantum API
-        
-        Args:
-            config: Конфигурация схемы (elementsObject + actualHistoryMap + launch)
-            timeout: Таймаут запроса в секундах
+            line: Строка QASM кода
+            column: Номер колонки
             
         Returns:
-            Ответ от API с результатами выполнения
-            
-        Raises:
-            Exception: При ошибке API или таймауте
+            Dict с информацией о гейте или None
         """
-        url = f"{self.base_url}/circuit/api"
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json"
+        line = line.rstrip(';').strip()
+        
+        # Однокубитные гейты без параметров
+        single_qubit_gates = {
+            'h': ('H', 'base'),
+            'x': ('X', 'base'),
+            'y': ('Y', 'base'),
+            'z': ('Z', 'base'),
+            's': ('S', 'base'),
+            'sdg': ('SREVERSE', 'base'),
+            't': ('T', 'base'),
+            'tdg': ('TREVERSE', 'base'),
+            'id': ('I', 'base'),
         }
         
-        try:
-            response = self.session.post(
-                url,
-                headers=headers,
-                json=config,
-                timeout=timeout
-            )
+        # Гейты с параметрами
+        param_gates = ['rx', 'ry', 'rz', 'u1', 'u2', 'u3']
+        
+        # Пытаемся распарсить
+        parts = line.split()
+        if not parts:
+            return None
+        
+        gate_name = parts[0].lower()
+        
+        # Однокубитные без параметров
+        if gate_name in single_qubit_gates:
+            title, gate_type = single_qubit_gates[gate_name]
+            qubit_str = parts[1] if len(parts) > 1 else 'q[0]'
+            qubit_num = self.extract_qubit_number(qubit_str)
             
-            if response.status_code == 200:
-                return response.json()
-            else:
-                error_msg = f"MIREA Quantum API error {response.status_code}: {response.text}"
-                raise Exception(error_msg)
+            return {
+                'title': title,
+                'type': gate_type,
+                'qubits': [qubit_num],
+                'params': None
+            }
+        
+        # Гейты с параметрами
+        if gate_name in param_gates:
+            # rx(1.5708) q[0];
+            param_start = line.find('(')
+            param_end = line.find(')')
+            
+            if param_start != -1 and param_end != -1:
+                param_value = float(line[param_start+1:param_end])
+                qubit_str = line[param_end+1:].strip().split()[0]
+                qubit_num = self.extract_qubit_number(qubit_str)
                 
-        except requests.exceptions.Timeout:
-            raise Exception(f"Request to MIREA Quantum API timed out after {timeout}s")
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Request to MIREA Quantum API failed: {str(e)}")
+                return {
+                    'title': gate_name.upper(),
+                    'type': 'params',
+                    'qubits': [qubit_num],
+                    'params': {
+                        'key': 'theta',
+                        'value': {
+                            'key': f'angle_{column}',
+                            'data': 'input-number',
+                            'value': param_value
+                        }
+                    }
+                }
+        
+        # Barrier
+        if gate_name == 'barrier':
+            return {
+                'title': 'BARRIER',
+                'type': 'auxiliary',
+                'qubits': [0],
+                'params': None
+            }
+        
+        # Measurement
+        if gate_name == 'measure':
+            qubit_str = parts[1] if len(parts) > 1 else 'q[0]'
+            qubit_num = self.extract_qubit_number(qubit_str)
+            
+            return {
+                'title': 'MEASUREMENT',
+                'type': 'auxiliary',
+                'qubits': [qubit_num],
+                'params': None
+            }
+        
+        # CNOT / CX
+        if gate_name in ['cx', 'cnot']:
+            if len(parts) >= 3:
+                control = self.extract_qubit_number(parts[1].rstrip(','))
+                target = self.extract_qubit_number(parts[2])
+                
+                return {
+                    'title': 'CONTROL',
+                    'type': 'auxiliary',
+                    'qubits': [control, target],
+                    'params': None
+                }
+        
+        logger.warning(f"Unknown QASM gate: {line}")
+        return None
     
-    def parse_measurement_results(self, api_response: Dict) -> Dict[str, int]:
+    def extract_qubit_number(self, qubit_str: str) -> int:
         """
-        Парсит результаты измерений из ответа MIREA Quantum API
+        Извлекает номер кубита из строки типа 'q[0]'
         
         Args:
-            api_response: Ответ от API
+            qubit_str: Строка с кубитом
             
         Returns:
-            Словарь {bitstring: count}, например {"0101": 234, "1010": 567}
-            
-        Raises:
-            ValueError: Если формат ответа неизвестен
+            Номер кубита
         """
-        # Проверяем различные возможные форматы ответа
-        if "counts" in api_response:
-            return api_response["counts"]
-        elif "measurements" in api_response:
-            return api_response["measurements"]
-        elif "result" in api_response and "counts" in api_response["result"]:
-            return api_response["result"]["counts"]
-        elif "data" in api_response and "counts" in api_response["data"]:
-            return api_response["data"]["counts"]
-        else:
-            # Пытаемся найти любой словарь с битстрингами
-            for key, value in api_response.items():
-                if isinstance(value, dict) and all(
-                    isinstance(k, str) and all(c in '01' for c in k) 
-                    for k in value.keys()
-                ):
-                    return value
-            
-            raise ValueError(f"Unknown response format from MIREA Quantum API: {api_response.keys()}")
+        try:
+            # q[0] -> 0
+            if '[' in qubit_str:
+                return int(qubit_str.split('[')[1].split(']')[0])
+            return 0
+        except:
+            return 0
     
-    def calculate_expectation_value(self, counts: Dict[str, int], 
-                                   h: Dict[int, float], 
-                                   J: Dict[Tuple[int, int], float]) -> float:
+    def process_measurements(
+        self, 
+        measurements: Dict[str, int],
+        num_qubits: int
+    ) -> Dict[str, Any]:
         """
-        Вычисляет среднее значение энергии Изинг-модели по результатам измерений
+        Обрабатывает результаты измерений
         
         Args:
-            counts: Результаты измерений {bitstring: count}
-            h: Локальные поля
-            J: Парные взаимодействия
+            measurements: Результаты от MIREA {state: count}
+            num_qubits: Количество кубитов
             
         Returns:
-            Среднее значение энергии
+            Dict с обработанными результатами
         """
-        total_shots = sum(counts.values())
-        if total_shots == 0:
-            return 0.0
+        if not measurements:
+            return {
+                'best_state': None,
+                'probability': 0,
+                'energy': 0
+            }
         
-        energy_sum = 0.0
+        total_shots = sum(measurements.values())
         
-        for bitstring, count in counts.items():
-            # Конвертируем битстринг в спины (-1, +1)
-            spins = [1 if bit == '0' else -1 for bit in bitstring]
-            
-            # Вычисляем энергию для этой конфигурации
-            energy = 0.0
-            
-            # Локальные члены
-            for qubit_idx, h_value in h.items():
-                if qubit_idx < len(spins):
-                    energy += h_value * spins[qubit_idx]
-            
-            # Парные взаимодействия
-            for (i, j), J_value in J.items():
-                if i < len(spins) and j < len(spins):
-                    energy += J_value * spins[i] * spins[j]
-            
-            energy_sum += energy * count
+        # Находим наиболее вероятное состояние
+        best_state_int = max(measurements.items(), key=lambda x: x[1])
+        best_state_bin = bin(int(best_state_int[0]))[2:].zfill(num_qubits)
         
-        return energy_sum / total_shots
-    
-    def find_best_solution(self, counts: Dict[str, int]) -> Tuple[str, int]:
-        """
-        Находит наиболее часто измеренную конфигурацию
+        probability = best_state_int[1] / total_shots if total_shots > 0 else 0
         
-        Args:
-            counts: Результаты измерений {bitstring: count}
-            
-        Returns:
-            Кортеж (лучший битстринг, количество измерений)
-        """
-        if not counts:
-            return ("", 0)
-        
-        best_bitstring = max(counts.items(), key=lambda x: x[1])
-        return best_bitstring
-
-
-def test_adapter():
-    """Тестовая функция для проверки работы адаптера"""
-    print("Testing MIREA Quantum Adapter...")
-    
-    # Простой пример: 3 кубита, простая Изинг-модель
-    n_qubits = 3
-    h = {0: 0.5, 1: -0.3, 2: 0.2}
-    J = {(0, 1): 0.4, (1, 2): -0.6}
-    gamma = 0.7
-    beta = 0.4
-    
-    # Создаем адаптер (без реальных учетных данных для теста)
-    adapter = MIREAQuantumAdapter("test@example.com", "dummy_password")
-    
-    # Генерируем конфигурацию
-    config = adapter.generate_qaoa_circuit_config(n_qubits, h, J, gamma, beta, shots=100)
-    
-    print(f"\nGenerated config for {n_qubits} qubits:")
-    print(f"  Elements: {len(config['elementsObject'])}")
-    print(f"  History map rows: {len(config['actualHistoryMap'])}")
-    print(f"  Max columns: {max(len(row) for row in config['actualHistoryMap'])}")
-    print(f"  Shots: {config['launch']}")
-    
-    # Проверяем структуру
-    assert len(config['actualHistoryMap']) == n_qubits
-    assert all(row[-1] == "block" for row in config['actualHistoryMap'])
-    
-    print("\n✓ Test passed!")
-    
-    # Сохраняем пример конфигурации
-    with open("example_mirea_circuit.json", "w") as f:
-        json.dump(config, f, indent=2)
-    print("✓ Example config saved to example_mirea_circuit.json")
-
-
-if __name__ == "__main__":
-    test_adapter()
+        return {
+            'best_state': best_state_bin,
+            'best_state_int': int(best_state_int[0]),
+            'counts': best_state_int[1],
+            'probability': probability,
+            'total_shots': total_shots,
+            'all_measurements': measurements
+        }

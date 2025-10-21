@@ -25,8 +25,8 @@ class HackathonCSVParser:
             gi_raw = int(getattr(row, "graphindex"))
             matrix = self._parse_matrix(getattr(row, "graphmatrix"))
             routes = self._parse_routes(getattr(row, "routesstartend"))
-            if matrix.shape != (100, 100):
-                raise ValueError(f"Graph row {row_order}: adjacency matrix must be 100x100, got {matrix.shape}")
+            if matrix.shape[0] != matrix.shape[1]:
+                raise ValueError(f"Graph row {row_order}: adjacency matrix must be square, got {matrix.shape}")
             if len(routes) != 500:
                 raise ValueError(f"Graph row {row_order}: routes_start_end must contain exactly 500 pairs, got {len(routes)}")
             self._validate_graph_data(row_order, matrix, routes)
