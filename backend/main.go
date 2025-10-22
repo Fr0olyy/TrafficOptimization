@@ -120,7 +120,7 @@ func process(w http.ResponseWriter, r *http.Request) {
 		baselineLimit  = 100
 		demoBatch      = 0
 		qasmVersion    = "3.0"
-		qaoaLayers     = 2
+		qaoaLayers     = 1
 		maxQubits      = 25
 		requestTimeout = 30 * time.Minute
 	)
@@ -140,8 +140,9 @@ func process(w http.ResponseWriter, r *http.Request) {
 	argsQuant := []string{
 		runnerQuant,
 		"--csv-file", dstPath,
-		"--max-routes", itoa(10),
+		"--max-routes", itoa(999999),
 		"--p-layers", itoa(qaoaLayers),
+		"--workers", itoa(4),
 	}
 
 	type resp struct {
