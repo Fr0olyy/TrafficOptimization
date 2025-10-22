@@ -5,6 +5,7 @@ import { calculateAverageSpeedup, calculateAverageImprovement } from '../../util
 import { GraphVisualization } from '../visualization/GraphVisualization';
 import { YandexMapsVisualization } from '../visualization/YandexMapsVisualization';
 import { generateGraphCoordinates, generateCircularCoordinates } from '../../utils/coordinateGenerator';
+import { RoutesList } from '../dashboard/RoutesList';  // ⭐ NEW IMPORT
 
 interface ResultsDashboardProps {
   results: ProcessResponse;
@@ -21,7 +22,7 @@ export function ResultsDashboard({
   onDownloadClassical,
   onDownloadQuantum,
 }: ResultsDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'metrics' | 'visualization' | 'maps'>('metrics');
+  const [activeTab, setActiveTab] = useState<'metrics' | 'routes' | 'visualization' | 'maps'>('metrics');  // ⭐ добавил routes
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const [selectedGraphIndex, setSelectedGraphIndex] = useState(0);
 
@@ -44,7 +45,23 @@ export function ResultsDashboard({
     const edges: Array<{ from: number; to: number; weight: number }> = [];
     const edgeSet = new Set<string>();
 
-    // Собираем рёбра из маршрутов
+    // ⭐ UPDATED: Собираем рёбра из routes если они есть
+    if (currentGraph.routes) {
+      currentGraph.routes.forEach(route => {
+        const path = route.quantum.path;
+        for (let i = 0; i < path.length - 1; i++) {
+          const from = Math.min(path[i], path[i + 1]);
+          const to = Math.max(path[i], path[i + 1]);
+          const key = `${from}-${to}`;
+          if (!edgeSet.has(key) && from < numNodes && to < numNodes) {
+            edgeSet.add(key);
+            edges.push({ from, to, weight: 1 });
+          }
+        }
+      });
+    }
+
+    // Fallback: старый способ из routes_optimized
     const addEdgesFromRoutes = (routes: number[][] | undefined) => {
       if (!routes) return;
       routes.forEach((route: number[]) => {
@@ -60,18 +77,23 @@ export function ResultsDashboard({
       });
     };
 
-    addEdgesFromRoutes(currentGraph.classical?.enhanced?.routes_optimized);
-    addEdgesFromRoutes(currentGraph.quantum?.enhanced?.routes_optimized);
+    if (edges.length === 0) {
+      addEdgesFromRoutes(currentGraph.classical?.enhanced?.routes_optimized);
+      addEdgesFromRoutes(currentGraph.quantum?.enhanced?.routes_optimized);
+    }
 
     return { nodes, edges };
   }, [currentGraph]);
 
-  // Подготовка путей
+  // ⭐ UPDATED: Пути из routes или fallback
   const classicalPath = useMemo(() => {
     return currentGraph?.classical?.enhanced?.routes_optimized?.[0] || [];
   }, [currentGraph]);
 
   const quantumPath = useMemo(() => {
+    if (currentGraph?.routes && currentGraph.routes.length > 0) {
+      return currentGraph.routes[0].quantum.path;
+    }
     return currentGraph?.quantum?.enhanced?.routes_optimized?.[0] || [];
   }, [currentGraph]);
 
@@ -79,11 +101,9 @@ export function ResultsDashboard({
   const coordinates = useMemo(() => {
     if (!graphData) return [];
 
-    // Используем graph_index как seed для детерминированной генерации
     const seed = currentGraph?.graph_index || 0;
 
     if (graphData.edges.length > 0) {
-      // Если есть рёбра, используем force-directed layout
       return generateGraphCoordinates(graphData.nodes, graphData.edges, {
         centerLat: 55.7558,
         centerLon: 37.6173,
@@ -91,7 +111,6 @@ export function ResultsDashboard({
         seed: seed + 42
       });
     } else {
-      // Если рёбер нет, располагаем по кругу
       return generateCircularCoordinates(graphData.nodes, {
         centerLat: 55.7558,
         centerLon: 37.6173,
@@ -159,7 +178,7 @@ export function ResultsDashboard({
       <div className="flex">
         {/* Left Panel - 40% */}
         <div className="w-[40%] p-6 space-y-6 overflow-y-auto scrollbar-hide" style={{ maxHeight: 'calc(100vh - 80px)' }}>
-          {/* Summary Cards - same as before */}
+          {/* Summary Cards */}
           <div className="grid grid-cols-2 gap-4">
             {/* Total Time */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
@@ -175,7 +194,7 @@ export function ResultsDashboard({
               <div className="text-sm font-medium">Total Processing Time</div>
             </div>
 
-            {/* Other cards... */}
+            {/* Quantum Speedup */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-12 h-12 rounded-lg flex items-center justify-center"
@@ -190,6 +209,7 @@ export function ResultsDashboard({
               <div className="text-sm font-medium">Quantum Speedup</div>
             </div>
 
+            {/* Distance Improvement */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-12 h-12 rounded-lg flex items-center justify-center"
@@ -203,6 +223,7 @@ export function ResultsDashboard({
               <div className="text-sm font-medium">Route Optimization</div>
             </div>
 
+            {/* ⭐ NEW: Routes Stats Card */}
             <div className="glass-effect rounded-xl p-5 hover-lift">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-12 h-12 rounded-lg flex items-center justify-center"
@@ -211,9 +232,14 @@ export function ResultsDashboard({
                 </div>
               </div>
               <div className="text-3xl font-bold mb-1 font-mono gradient-text">
-                {results.perGraph.length}
+                {currentGraph.stats?.successful || results.perGraph.length}/{currentGraph.stats?.total_routes || 'N/A'}
               </div>
-              <div className="text-sm font-medium">Graphs Analyzed</div>
+              <div className="text-sm font-medium">Routes Processed</div>
+              {currentGraph.stats && (
+                <div className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
+                  {((currentGraph.stats.successful / currentGraph.stats.total_routes) * 100).toFixed(1)}% success
+                </div>
+              )}
             </div>
           </div>
 
@@ -238,12 +264,12 @@ export function ResultsDashboard({
 
         {/* Right Panel - 60% */}
         <div className="w-[60%] p-6 overflow-y-auto scrollbar-hide" style={{ maxHeight: 'calc(100vh - 80px)' }}>
-          {/* Tabs */}
+          {/* ⭐ UPDATED: Tabs с routes */}
           <div className="flex gap-2 mb-6 border-b pb-2" style={{ borderColor: 'rgba(255, 255, 255, 0.1)' }}>
-            {['metrics', 'visualization', 'maps'].map((tab) => (
+            {(['metrics', 'routes', 'visualization', 'maps'] as const).map((tab) => (
               <button
                 key={tab}
-                onClick={() => setActiveTab(tab as any)}
+                onClick={() => setActiveTab(tab)}
                 className={`px-6 py-3 font-medium transition-all relative ${
                   activeTab === tab ? '' : 'opacity-50 hover:opacity-75'
                 }`}>
@@ -296,6 +322,52 @@ export function ResultsDashboard({
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* ⭐ NEW: Routes Tab */}
+          {activeTab === 'routes' && (
+            <div className="glass-effect rounded-xl p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-lg font-semibold">Detailed Routes</h3>
+                  {currentGraph.stats && (
+                    <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+                      {currentGraph.stats.successful} successful routes from {currentGraph.stats.total_routes} total
+                    </p>
+                  )}
+                </div>
+                
+                {currentGraph.stats && (
+                  <div className="flex items-center gap-4 text-sm">
+                    <div className="text-right">
+                      <div style={{ color: 'var(--color-text-tertiary)' }}>Total Time</div>
+                      <div className="font-mono font-bold" style={{ color: 'var(--color-quantum)' }}>
+                        {(currentGraph.stats.pure_quantum_time * 1000).toFixed(2)}ms
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div style={{ color: 'var(--color-text-tertiary)' }}>Avg per Route</div>
+                      <div className="font-mono font-bold">
+                        {((currentGraph.stats.pure_quantum_time / currentGraph.stats.successful) * 1000).toFixed(2)}ms
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {currentGraph.routes ? (
+                <RoutesList 
+                  routes={currentGraph.routes}
+                  onRouteSelect={(route) => {
+                    console.log('Selected route:', route);
+                  }}
+                />
+              ) : (
+                <div className="glass-effect rounded-xl p-8 text-center">
+                  <p style={{ color: 'var(--color-text-secondary)' }}>No routes data available for this graph</p>
+                </div>
+              )}
             </div>
           )}
 
