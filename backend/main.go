@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -75,6 +74,7 @@ func process(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	if err := r.ParseMultipartForm(64 << 20); err != nil {
 		http.Error(w, "bad form: "+err.Error(), http.StatusBadRequest)
 		return
@@ -93,18 +93,7 @@ func process(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	iterations := getIntParam(r, "iterations", 1)
-	baselineLimit := getIntParam(r, "baseline_limit", 100)
-	qaoaLayers := getIntParam(r, "layers", 2)
-	maxQubits := getIntParam(r, "max_qubits", 25)
-	useMirea := r.FormValue("use_mirea") == "true"
-
 	log.Printf("Processing file: %s (size: %d bytes)", header.Filename, header.Size)
-	log.Printf("Parameters: iterations=%d, baseline=%d, layers=%d, qubits=%d",
-		iterations, baselineLimit, qaoaLayers, maxQubits)
-	if useMirea {
-		log.Printf("MIREA Quantum: enabled")
-	}
 
 	tmpDir, err := os.MkdirTemp("", "upload-*")
 	if err != nil {
@@ -119,175 +108,148 @@ func process(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create file error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	if _, err := io.Copy(dst, file); err != nil {
-		dst.Close()
 		http.Error(w, "save file error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	dst.Close()
+	_ = dst.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	const (
+		iterations     = 1
+		baselineLimit  = 100
+		demoBatch      = 0
+		qasmVersion    = "3.0"
+		qaoaLayers     = 2
+		maxQubits      = 25
+		requestTimeout = 30 * time.Minute
+	)
+
+	log.Printf("Parameters: iterations=%d, baseline=%d, layers=%d, qubits=%d",
+		iterations, baselineLimit, qaoaLayers, maxQubits)
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
+	// Classical runner
 	runnerClass := filepath.Join("py", "runner_classical.py")
-	argsClass := []string{
-		runnerClass,
-		"--input", dstPath,
-		"--iterations", itoa(iterations),
-		"--baseline-limit", itoa(baselineLimit),
-	}
+	argsClass := []string{runnerClass, "--input", dstPath, "--iterations", itoa(iterations), "--baseline-limit", itoa(baselineLimit)}
 
+	// NEW Quantum runner with --csv-file
 	runnerQuant := filepath.Join("py", "runner.py")
 	argsQuant := []string{
 		runnerQuant,
 		"--csv-file", dstPath,
-		"--output", "/tmp/quantum_results.json",
-		"--max-routes", itoa(min(10, baselineLimit)),
+		"--max-routes", itoa(10),
 		"--p-layers", itoa(qaoaLayers),
 	}
 
-	if useMirea {
-		argsQuant = append(argsQuant, "--use-mirea")
-
-		mireaEmail := r.FormValue("mirea_email")
-		mireaPassword := r.FormValue("mirea_password")
-		mireaShots := getIntParam(r, "mirea_shots", 1024)
-		mireaTimeout := getIntParam(r, "mirea_timeout", 300)
-
-		if mireaEmail != "" && mireaPassword != "" {
-			argsQuant = append(argsQuant, "--mirea-email", mireaEmail)
-			argsQuant = append(argsQuant, "--mirea-password", mireaPassword)
-			argsQuant = append(argsQuant, "--mirea-shots", itoa(mireaShots))
-			argsQuant = append(argsQuant, "--mirea-timeout", itoa(mireaTimeout))
-			log.Printf("MIREA params: email=%s, shots=%d, timeout=%d",
-				mireaEmail, mireaShots, mireaTimeout)
-		} else {
-			log.Println("Warning: MIREA enabled but credentials not provided")
-		}
-	}
-
 	type resp struct {
-		OK        bool             `json:"ok"`
-		Mode      string           `json:"mode"`
-		File      string           `json:"file"`
-		Results   []map[string]any `json:"results"`
-		Summary   map[string]any   `json:"summary"`
-		CSVBase64 string           `json:"csv_base64"`
-		CSVName   string           `json:"csv_filename"`
+		OK        bool           `json:"ok"`
+		Mode      string         `json:"mode"`
+		File      string         `json:"file"`
+		Results   []any          `json:"results"`
+		CSVBase64 string         `json:"csv_base64"`
+		CSVName   string         `json:"csv_filename"`
+		Summary   map[string]any `json:"summary"`
 	}
 
 	log.Println("Running classical optimization...")
 	outClass, errClass := runPython(ctx, argsClass)
 	if errClass != nil {
-		log.Printf("Classical runner error: %v", errClass)
-		http.Error(w, "Classical optimization failed: "+string(outClass), http.StatusBadRequest)
+		log.Printf("Classical error: %v", errClass)
+		http.Error(w, string(outClass), http.StatusBadRequest)
 		return
 	}
 
 	log.Println("Running quantum optimization...")
 	outQuant, errQuant := runPython(ctx, argsQuant)
 	if errQuant != nil {
-		log.Printf("Quantum runner error: %v", errQuant)
-		http.Error(w, "Quantum optimization failed: "+string(outQuant), http.StatusBadRequest)
+		log.Printf("Quantum error: %v", errQuant)
+		log.Printf("Quantum output: %s", truncate(string(outQuant), 500))
+		http.Error(w, string(outQuant), http.StatusBadRequest)
 		return
 	}
 
 	var rClass, rQuant resp
 	if err := json.Unmarshal(outClass, &rClass); err != nil {
-		log.Printf("Failed to parse classical results: %v", err)
+		log.Printf("Failed to parse classical: %v", err)
 		http.Error(w, "Failed to parse classical results", http.StatusInternalServerError)
 		return
 	}
+
 	if err := json.Unmarshal(outQuant, &rQuant); err != nil {
-		log.Printf("Failed to parse quantum results: %v", err)
-		log.Printf("Quantum output (first 500 chars): %s", string(outQuant[:min(len(outQuant), 500)]))
+		log.Printf("Failed to parse quantum: %v", err)
 		http.Error(w, "Failed to parse quantum results", http.StatusInternalServerError)
 		return
 	}
 
+	// Save CSVs
 	var idClass, idQuant string
 	if rClass.CSVBase64 != "" {
 		b, _ := base64.StdEncoding.DecodeString(rClass.CSVBase64)
 		idClass = genID()
-		store.Store(idClass, csvRecord{
-			Name: safeName(rClass.CSVName, "classical_routes.csv"),
-			Data: b,
-		})
-		log.Printf("Saved classical CSV: %s (id=%s)", rClass.CSVName, idClass)
+		store.Store(idClass, csvRecord{Name: safeName(rClass.CSVName, "classical_routes.csv"), Data: b})
 	}
 	if rQuant.CSVBase64 != "" {
 		b, _ := base64.StdEncoding.DecodeString(rQuant.CSVBase64)
 		idQuant = genID()
-		store.Store(idQuant, csvRecord{
-			Name: safeName(rQuant.CSVName, "quantum_routes.csv"),
-			Data: b,
-		})
-		log.Printf("Saved quantum CSV: %s (id=%s)", rQuant.CSVName, idQuant)
+		store.Store(idQuant, csvRecord{Name: safeName(rQuant.CSVName, "quantum_routes.csv"), Data: b})
 	}
 
+	// Build perGraph with NEW routes data
 	perGraph := make([]map[string]any, 0, min(len(rClass.Results), len(rQuant.Results)))
 	for i := 0; i < min(len(rClass.Results), len(rQuant.Results)); i++ {
-		c := rClass.Results[i]
-		q := rQuant.Results[i]
+		c := rClass.Results[i].(map[string]any)
+		q := rQuant.Results[i].(map[string]any)
 
-		cm, ok1 := c["metrics"].(map[string]any)
-		if !ok1 {
-			log.Printf("Warning: skipping graph %d - no classical metrics", i)
-			continue
-		}
+		cm := c["metrics"].(map[string]any)
 
-		ce, ok1 := cm["enhanced"].(map[string]any)
-		if !ok1 {
-			log.Printf("Warning: skipping graph %d - no classical enhanced", i)
-			continue
-		}
+		// NEW: Extract routes and stats from quantum results
+		routes, hasRoutes := q["routes"].([]any)
+		stats, hasStats := q["stats"].(map[string]any)
 
-		qStats, ok2 := q["stats"].(map[string]any)
-		if !ok2 {
-			log.Printf("Warning: skipping graph %d - no quantum stats", i)
-			continue
-		}
-
-		ceMs := intFromAny(ce["opt_time_ms"])
-
-		qRoutes, _ := q["routes"].([]any)
-		var qTimeTotal float64
-		for _, route := range qRoutes {
-			if rm, ok := route.(map[string]any); ok {
-				if qm, ok := rm["quantum"].(map[string]any); ok {
-					qTimeTotal += floatFromAny(qm["time"])
-				}
+		// Build quantum metrics (backward compatible format)
+		var qm map[string]any
+		if hasStats {
+			qm = map[string]any{
+				"enhanced": map[string]any{
+					"opt_time_ms":       floatToInt(stats["pure_quantum_time"].(float64) * 1000),
+					"successful_routes": stats["successful"],
+					"total_routes":      stats["total_routes"],
+					"average_cost":      0,
+				},
 			}
+		} else {
+			// Fallback to old format
+			qm = q["metrics"].(map[string]any)
 		}
-		qeMs := int(qTimeTotal * 1000)
 
-		graphData := map[string]any{
+		ce := cm["enhanced"].(map[string]any)
+		qe := qm["enhanced"].(map[string]any)
+		ceMs := intFromAny(ce["opt_time_ms"])
+		qeMs := intFromAny(qe["opt_time_ms"])
+
+		graphEntry := map[string]any{
 			"graph_index": q["graph_index"],
 			"classical":   cm,
-			"quantum": map[string]any{
-				"enhanced": map[string]any{
-					"opt_time_ms":       qeMs,
-					"total_routes":      intFromAny(qStats["total_routes"]),
-					"successful_routes": intFromAny(qStats["successful"]),
-					"average_cost":      floatFromAny(qStats["average_quantum_cost"]),
-				},
-			},
+			"quantum":     qm,
 			"compare": map[string]any{
 				"delta_ms":        qeMs - ceMs,
 				"quantum_speedup": speedup(ceMs, qeMs),
 			},
 		}
 
-		if mireaExec, ok := q["mirea_execution"].(map[string]any); ok {
-			graphData["mirea_execution"] = mireaExec
-			log.Printf("Graph %d: MIREA execution included", i)
+		// NEW: Add routes if available
+		if hasRoutes {
+			graphEntry["routes"] = routes
+		}
+		if hasStats {
+			graphEntry["stats"] = stats
 		}
 
-		perGraph = append(perGraph, graphData)
+		perGraph = append(perGraph, graphEntry)
 	}
-
-	elapsed := time.Since(start).Milliseconds()
-	log.Printf("Processing completed in %dms", elapsed)
 
 	out := map[string]any{
 		"ok":       true,
@@ -296,18 +258,18 @@ func process(w http.ResponseWriter, r *http.Request) {
 			"classical_csv": idClass,
 			"quantum_csv":   idQuant,
 		},
-		"elapsed_ms": elapsed,
+		"elapsed_ms": time.Since(start).Milliseconds(),
 		"parameters": map[string]any{
 			"iterations":     iterations,
 			"baseline_limit": baselineLimit,
 			"qaoa_layers":    qaoaLayers,
 			"max_qubits":     maxQubits,
-			"mirea_enabled":  useMirea,
+			"mirea_enabled":  false,
 		},
 		"summary": map[string]any{
 			"total_graphs":      len(perGraph),
-			"classical_summary": rClass.Summary,
 			"quantum_summary":   rQuant.Summary,
+			"classical_summary": nil,
 		},
 	}
 
@@ -326,44 +288,41 @@ func download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="`+rec.Name+`"`)
 	w.WriteHeader(http.StatusOK)
 	w.Write(rec.Data)
-	log.Printf("Downloaded CSV: %s (id=%s)", rec.Name, id)
 }
 
 func runPython(ctx context.Context, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "python3", args...)
 	cmd.Env = os.Environ()
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-
-	if stderr.Len() > 0 {
-		log.Printf("Python stderr:\n%s", stderr.String())
+	// IMPORTANT: Read ONLY stdout, ignore stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
 	}
 
-	return stdout.Bytes(), err
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	output, err := io.ReadAll(stdout)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return output, err
+	}
+
+	return output, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
-func getIntParam(r *http.Request, key string, def int) int {
-	if val := r.FormValue(key); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
-		}
-	}
-	return def
-}
-
-func itoa(v int) string {
-	return strconv.Itoa(v)
-}
+func itoa(v int) string { return strconv.Itoa(v) }
 
 func intFromAny(a any) int {
 	switch t := a.(type) {
@@ -383,22 +342,8 @@ func intFromAny(a any) int {
 	}
 }
 
-func floatFromAny(a any) float64 {
-	switch t := a.(type) {
-	case float64:
-		return t
-	case float32:
-		return float64(t)
-	case int:
-		return float64(t)
-	case int64:
-		return float64(t)
-	case json.Number:
-		f, _ := t.Float64()
-		return f
-	default:
-		return 0
-	}
+func floatToInt(f float64) int {
+	return int(f)
 }
 
 func speedup(baseMs, testMs int) float64 {
@@ -422,6 +367,13 @@ func genID() string {
 func safeName(s, def string) string {
 	if s == "" {
 		return def
+	}
+	return s
+}
+
+func truncate(s string, max int) string {
+	if len(s) > max {
+		return s[:max]
 	}
 	return s
 }
