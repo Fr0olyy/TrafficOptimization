@@ -40,8 +40,17 @@ services:
           cpus: "2"
           memory: 2G
 
+    # --- ИСПРАВЛЕНИЕ: ИСПОЛЬЗУЕМ NAMED VOLUME ---
+    volumes:
+      - quantum-schemes-data:/app/py/quantum_schemes
+    # --------------------------------------------
+
     networks:
       - quantum-net
+
+# --- ИСПРАВЛЕНИЕ: ОБЪЯВЛЯЕМ NAMED VOLUME ---
+volumes:
+  quantum-schemes-data:
 
 networks:
   quantum-net:
