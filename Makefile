@@ -22,3 +22,8 @@ check-versions:
 	@docker-compose exec quantum-optimizer python3 --version
 	@docker-compose exec quantum-optimizer /app/server --version 2>/dev/null || echo "Go binary built successfully"
 	@docker-compose exec quantum-optimizer pip list | grep -E "numpy|pandas|requests"
+
+tyur: 
+	docker-compose down
+	docker-compose build --no-cache
+	docker-compose up -d

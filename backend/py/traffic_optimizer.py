@@ -3,114 +3,175 @@ from typing import List, Tuple, Dict, Any
 import logging
 import heapq
 import time
+import random
+import sys
 
 logger = logging.getLogger(__name__)
 
-
 class EnhancedTrafficOptimizer:
     def __init__(self):
-        self.graph_data = None
-        self.adjacency_matrix = None
-    
-    def load_graph_from_dict(self, graph_data: Dict[str, Any]):
+        self.base_adjacency_matrix = None
+        self.adjacency_matrix = None # Добавлено для совместимости
+
+    # --- НАШ НОВЫЙ, ЭФФЕКТИВНЫЙ МЕТОД ---
+    def solve_with_congestion(
+        self,
+        adjacency_matrix: np.ndarray,
+        routes: List[Tuple[int, int]],
+        iterations: int = 15,
+        reroute_fraction: float = 0.1
+    ) -> Dict[str, Any]:
         """
-        Загружает граф из словаря с ключами nodes, edges, adjacency
-        Создает матрицу смежности из данных графа
+        Основной метод для решения задачи с учетом загруженности.
         """
-        self.graph_data = graph_data
-        nodes = graph_data.get('nodes', [])
-        edges = graph_data.get('edges', [])
+        start_time = time.time()
+        self.base_adjacency_matrix = adjacency_matrix.copy()
+        num_vehicles = len(routes)
+
+        current_paths = [self.find_shortest_path(self.base_adjacency_matrix, s, t) for s, t in routes]
+
+        initial_congestion = self.build_congestion_matrix(current_paths)
+        initial_cost = self.calculate_total_cost_with_congestion(current_paths, self.base_adjacency_matrix, initial_congestion)
+        history = [{'cost': initial_cost, 'iteration': 0}]
+
+        for i in range(iterations):
+            congestion_matrix = self.build_congestion_matrix(current_paths)
+            cost_matrix = self.base_adjacency_matrix * (congestion_matrix * congestion_matrix)
+
+            indices_to_reroute = random.sample(range(num_vehicles), int(num_vehicles * reroute_fraction))
+
+            for vehicle_idx in indices_to_reroute:
+                start_node, end_node = routes[vehicle_idx]
+                
+                path_to_remove = current_paths[vehicle_idx]
+                self.update_congestion_matrix(congestion_matrix, path_to_remove, -1)
+                
+                cost_matrix_for_reroute = self.base_adjacency_matrix * (congestion_matrix * congestion_matrix)
+                
+                new_path = self.find_shortest_path(cost_matrix_for_reroute, start_node, end_node)
+                
+                if new_path:
+                    current_paths[vehicle_idx] = new_path
+                    self.update_congestion_matrix(congestion_matrix, new_path, 1)
+
+            final_congestion = self.build_congestion_matrix(current_paths)
+            total_cost = self.calculate_total_cost_with_congestion(current_paths, self.base_adjacency_matrix, final_congestion)
+            history.append({'cost': total_cost, 'iteration': i + 1})
+            print(f"  Iter {i+1}/{iterations}: Total Cost = {total_cost:.2f}", file=sys.stderr)
+
+        elapsed_ms = (time.time() - start_time) * 1000
+
+        return {
+            "final_paths": current_paths,
+            "initial_cost": initial_cost,
+            "final_cost_with_congestion": history[-1]['cost'],
+            "iterations": iterations,
+            "time_ms": elapsed_ms,
+            "cost_history": history
+        }
+
+    # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ НОВОГО МЕТОДА ---
+    def build_congestion_matrix(self, paths: List[List[int]]) -> np.ndarray:
+        n = self.base_adjacency_matrix.shape[0]
+        congestion = np.zeros((n, n), dtype=int)
+        for path in paths:
+            if not path: continue
+            for i in range(len(path) - 1):
+                u, v = path[i], path[i+1]
+                congestion[u, v] += 1
+        return congestion
+
+    def update_congestion_matrix(self, congestion_matrix: np.ndarray, path: List[int], delta: int):
+        if not path: return
+        for i in range(len(path) - 1):
+            u, v = path[i], path[i+1]
+            congestion_matrix[u, v] = max(0, congestion_matrix[u, v] + delta)
+
+    def calculate_total_cost_with_congestion(self, paths: List[List[int]], base_adj: np.ndarray, congestion: np.ndarray) -> float:
+        cost_matrix = base_adj * (congestion * congestion)
+        total_cost = 0.0
+        for path in paths:
+            if not path: continue
+            for i in range(len(path) - 1):
+                u, v = path[i], path[i+1]
+                total_cost += cost_matrix[u, v]
+        return total_cost
+
+    def find_shortest_path(self, adj: np.ndarray, start: int, end: int) -> List[int]:
+        n = adj.shape[0]
+        dist = np.full(n, np.inf)
+        prev = np.full(n, -1, dtype=int)
+        dist[start] = 0.0
+        pq = [(0.0, start)]
+
+        while pq:
+            d, u = heapq.heappop(pq)
+            if d > dist[u]: continue
+            if u == end: break
+            for v in range(n):
+                weight = adj[u, v]
+                if np.isfinite(weight) and dist[u] + weight < dist[v]:
+                    dist[v] = dist[u] + weight
+                    prev[v] = u
+                    heapq.heappush(pq, (dist[v], v))
         
-        n = len(nodes)
-        if n == 0:
-            raise ValueError("Empty graph")
+        path = []
+        if np.isfinite(dist[end]):
+            curr = end
+            while curr != -1:
+                path.append(curr)
+                curr = prev[curr]
+            path.reverse()
         
-        # Создаём матрицу смежности, заполненную infinity
-        self.adjacency_matrix = np.full((n, n), np.inf, dtype=float)
-        
-        # Заполняем нулями диагональ
-        np.fill_diagonal(self.adjacency_matrix, 0)
-        
-        # Заполняем веса рёбер
-        for from_node, to_node, weight in edges:
-            if 0 <= from_node < n and 0 <= to_node < n:
-                self.adjacency_matrix[from_node, to_node] = float(weight)
-        
-        logger.info(f"Loaded graph with {n} nodes and {len(edges)} edges")
-        return self
-    
-    def solve_classical(self, start: int, end: int) -> Dict[str, Any]:
+        return path if path and path[0] == start else []
+
+    # --- СТАРЫЙ МЕТОД, ВОЗВРАЩЕН ДЛЯ СБОРА МЕТРИК MIREA ---
+    def solve_quantum(self, start: int, end: int, p: int = 1) -> Dict[str, Any]:
         """
-        Классическое решение через Dijkstra
+        Квантовое решение с генерацией QAOA схемы.
+        Используется ТОЛЬКО для сбора метрик с MIREA.
         """
         if self.adjacency_matrix is None:
-            raise ValueError("Graph not loaded. Call load_graph_from_dict() first")
+            raise ValueError("Graph not loaded. Set optimizer.adjacency_matrix first.")
         
-        start_time = time.time()
         path = self.find_shortest_path(self.adjacency_matrix, start, end)
-        elapsed = (time.time() - start_time) * 1000  # ms
-        
         cost = self.calculate_path_cost(path, self.adjacency_matrix)
+        
+        qasm_circuit = None
+        num_qubits = 0
+        
+        try:
+            from qubo_formulator import QUBOIsingFormulator
+            from qasm_exporter import OpenQASMExporter
+            
+            routes = [(start, end)]
+            formulator = QUBOIsingFormulator(self.adjacency_matrix, routes)
+            
+            subproblem = formulator.create_subproblem(
+                vehicle_indices=[0],
+                max_qubits=20,
+                max_steps=min(5, len(self.adjacency_matrix) - 1)
+            )
+            
+            num_qubits = subproblem['num_variables']
+            h, J, offset = formulator.qubo_to_ising(subproblem['qubo_matrix'])
+            
+            exporter = OpenQASMExporter(version="2.0")
+            qasm_circuit = exporter.generate_qaoa_circuit(h, J, num_layers=p)
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate QAOA circuit: {e}")
+            qasm_circuit = None
         
         return {
             'path': path,
             'cost': cost,
-            'time': elapsed,
-            'algorithm': 'dijkstra'
+            'qasm': qasm_circuit,
+            'num_qubits': num_qubits
         }
-    
-    def solve_quantum(self, start: int, end: int, p: int = 3) -> Dict[str, Any]:
-        """
-        "Квантовое" решение (пока используем тот же Dijkstra + симуляция)
-        В будущем здесь будет QAOA
-        """
-        if self.adjacency_matrix is None:
-            raise ValueError("Graph not loaded")
-        
-        start_time = time.time()
-        path = self.find_shortest_path(self.adjacency_matrix, start, end)
-        elapsed = (time.time() - start_time) * 1000
-        
-        cost = self.calculate_path_cost(path, self.adjacency_matrix)
-        
-        return {
-            'path': path,
-            'cost': cost,
-            'time': elapsed,
-            'energy': cost,
-            'p_layers': p,
-            'algorithm': 'qaoa_simulation'
-        }
-    
-    def compare_solutions(self, classical: Dict, quantum: Dict) -> Dict[str, Any]:
-        """
-        Сравнение классического и квантового решений
-        """
-        c_cost = classical.get('cost', 0)
-        q_cost = quantum.get('cost', 0)
-        c_time = classical.get('time', 0)
-        q_time = quantum.get('time', 0)
-        
-        improvement = 0.0
-        if c_cost > 0:
-            improvement = ((c_cost - q_cost) / c_cost) * 100
-        
-        speedup = 1.0
-        if q_time > 0:
-            speedup = c_time / q_time
-        
-        return {
-            'cost_improvement_percent': improvement,
-            'time_speedup': speedup,
-            'classical_better': c_cost < q_cost,
-            'quantum_better': q_cost < c_cost,
-            'equal': abs(c_cost - q_cost) < 0.001
-        }
-    
+
     def calculate_path_cost(self, path: List[int], adj: np.ndarray) -> float:
-        """
-        Вычисляет стоимость пути
-        """
+        """Вспомогательная функция для старого метода"""
         total = 0.0
         for i in range(len(path) - 1):
             weight = adj[path[i], path[i + 1]]
@@ -118,111 +179,3 @@ class EnhancedTrafficOptimizer:
                 return float('inf')
             total += weight
         return total
-
-    def solve_graph_with_congestion_awareness(
-        self, adjacency_matrix: np.ndarray, vehicle_routes: List[Tuple[int, int]], iterations: int = 1
-    ) -> List[List[int]]:
-        current_routes = [self.find_shortest_path(adjacency_matrix, s, t) for s, t in vehicle_routes]
-        for _ in range(max(0, iterations - 1)):
-            improved = [self.find_shortest_path(adjacency_matrix, s, t) for s, t in vehicle_routes]
-            current_routes = improved
-        return current_routes
-
-    def find_shortest_path(self, adj: np.ndarray, start: int, end: int) -> List[int]:
-        """Dijkstra с heap-оптимизацией"""
-        n = adj.shape[0]
-        dist = [float('inf')] * n
-        prev = [-1] * n
-        dist[start] = 0.0
-        pq = [(0.0, start)]
-        visited = [False] * n
-        
-        while pq:
-            d, u = heapq.heappop(pq)
-            if visited[u]:
-                continue
-            visited[u] = True
-            if u == end:
-                break
-            row = adj[u]
-            for v in range(n):
-                w = row[v]
-                if not visited[v] and np.isfinite(w):
-                    nd = d + float(w)
-                    if nd < dist[v]:
-                        dist[v] = nd
-                        prev[v] = u
-                        heapq.heappush(pq, (nd, v))
-        
-        if dist[end] == float('inf'):
-            return [start, end]
-        
-        path = []
-        u = end
-        while u != -1:
-            path.append(u)
-            u = prev[u]
-        path.reverse()
-        
-        if path[0] != start:
-            path = [start] + path
-        return path
-
-    def calculate_total_cost(self, routes: List[List[int]], adj: np.ndarray) -> float:
-        total = 0.0
-        for route in routes:
-            for i in range(len(route) - 1):
-                total += float(adj[route[i], route[i + 1]])
-        return total
-
-    def greedy_route(self, adj: np.ndarray, start: int, end: int) -> List[int]:
-        n = adj.shape[0]
-        cur = start
-        route = [cur]
-        visited = set([cur])
-        guard = 0
-        
-        while cur != end and guard < n * 2:
-            guard += 1
-            best_next, best_w = None, np.inf
-            row = adj[cur]
-            for nb in range(n):
-                w = row[nb]
-                if nb not in visited and np.isfinite(w) and w < best_w:
-                    best_w, best_next = w, nb
-            if best_next is None:
-                if np.isfinite(adj[cur, end]):
-                    route.append(end)
-                break
-            route.append(best_next)
-            visited.add(best_next)
-            cur = best_next
-        
-        if route[-1] != end and np.isfinite(adj[route[-1], end]):
-            route.append(end)
-        return route
-
-    def dijkstra_route(self, adj: np.ndarray, start: int, end: int) -> List[int]:
-        return self.find_shortest_path(adj, start, end)
-
-    def run_greedy_all(self, adj: np.ndarray, vehicle_routes: List[Tuple[int, int]]) -> List[List[int]]:
-        return [self.greedy_route(adj, s, t) for s, t in vehicle_routes]
-
-    def run_dijkstra_all(self, adj: np.ndarray, vehicle_routes: List[Tuple[int, int]]) -> List[List[int]]:
-        return [self.dijkstra_route(adj, s, t) for s, t in vehicle_routes]
-
-    def validate_routes(self, solution: List[List[int]], ref: List[Tuple[int, int]]) -> Dict[str, Any]:
-        total = len(ref)
-        valid = 0
-        issues = []
-        for i, (route, (s, e)) in enumerate(zip(solution, ref)):
-            if route and route[0] == s and route[-1] == e:
-                valid += 1
-            else:
-                issues.append({"route_idx": i, "expected": [s, e], "got": route})
-        return {
-            "total_routes": total,
-            "valid_routes": valid,
-            "issues": issues,
-            "validation_passed": valid == total
-        }

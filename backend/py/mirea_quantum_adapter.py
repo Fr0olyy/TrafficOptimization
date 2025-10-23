@@ -2,7 +2,6 @@
 MIREA Quantum API Adapter
 Интеграция с квантовым компьютером MIREA для выполнения QAOA схем
 """
-
 import requests
 import base64
 import time
@@ -14,17 +13,48 @@ import uuid
 logger = logging.getLogger(__name__)
 
 
+def post_with_curl(url, payload, email, password, timeout=300):
+    """Выполняет POST через curl (работает с 307 редиректом MIREA)"""
+    import subprocess
+    import tempfile
+    import json as json_module
+    import os
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json_module.dump(payload, f)
+        temp_file = f.name
+    
+    try:
+        result = subprocess.run([
+            'curl', '-s', '-X', 'POST',
+            '-u', f'{email}:{password}',
+            '-H', 'Content-Type: application/json',
+            '-d', f'@{temp_file}',
+            '--max-time', str(timeout),
+            url
+        ], capture_output=True, text=True, timeout=timeout)
+        
+        if result.returncode == 0:
+            try:
+                return json_module.loads(result.stdout)
+            except:
+                return {'error': f'Invalid JSON: {result.stdout[:100]}'}
+        return {'error': f'curl failed: {result.stderr}'}
+    finally:
+        if os.path.exists(temp_file):
+            os.unlink(temp_file)
+
+
 class MIREAQuantumAdapter:
     """Адаптер для работы с MIREA Quantum API"""
     
     def __init__(
-        self, 
-        email: str, 
+        self,
+        email: str,
         password: str,
-        api_url: str = "https://api.mirea-quantum.ru/nestor-team/circuit/api",  
+        api_url: str = "https://mireatom.mirea.ru/nestor-team/circuit/api",
         timeout: int = 300
     ):
-
         """
         Инициализация адаптера
         
@@ -40,7 +70,7 @@ class MIREAQuantumAdapter:
         self.timeout = timeout
         self.auth_token = None
         self.session = requests.Session()
-    
+        
     def authenticate(self) -> bool:
         """
         Аутентификация в MIREA API через Basic Auth
@@ -49,131 +79,107 @@ class MIREAQuantumAdapter:
             auth_str = f"{self.email}:{self.password}"
             auth_bytes = base64.b64encode(auth_str.encode('utf-8'))
             auth_header = f"Basic {auth_bytes.decode('utf-8')}"
-        
+            
             headers = {
                 'Authorization': auth_header,
                 'Content-Type': 'application/json'
             }
-        
+            
             logger.info(f"Authenticating with MIREA API: {self.api_url}")
-        
             # MIREA не требует отдельного /auth endpoint
             # Авторизация проверяется при каждом запросе
             self.auth_token = auth_header  # Используем Basic Auth напрямую
             logger.info("✓ MIREA credentials configured")
             return True
-        
+            
         except Exception as e:
             logger.error(f"MIREA authentication error: {e}")
             return False
     
     def execute_circuit(
-        self, 
-        qasm_circuit: str, 
+        self,
+        qasm_circuit: str,
         shots: int = 1024
     ) -> Dict[str, Any]:
         """Выполняет квантовую схему на MIREA"""
-    
         try:
             # Конвертируем QASM в формат MIREA
+            # Подставляем параметры (gamma=0.5, beta=0.3 для примера)
+            # TODO: передавать оптимальные значения параметров
+            p_layers = qasm_circuit.count("gamma_")
+            gamma_vals = [0.5] * max(1, p_layers)
+            beta_vals = [0.3] * max(1, p_layers)
+            qasm_circuit = substitute_qasm_parameters(qasm_circuit, gamma_vals, beta_vals)
+            logger.debug(f"Substituted QAOA parameters: gamma={gamma_vals}, beta={beta_vals}")
+
             circuit_json = self.qasm_to_mirea_format(qasm_circuit)
-        
+            
             # Формируем payload согласно документации
             payload = {
                 "elementsObject": circuit_json['elements'],
                 "actualHistoryMap": circuit_json['history'],
                 "launch": shots
             }
-        
+            
             headers = {
                 'Authorization': self.auth_token,  # Basic Auth
                 'Content-Type': 'application/json'
             }
-        
+            
+            import json as json_module
+            logger.debug(f"Payload JSON: {json_module.dumps(payload, indent=2)}")
+
             logger.info(f"Executing circuit on MIREA (shots={shots})")
             logger.debug(f"Circuit: {len(circuit_json['elements'])} gates")
-        
-            # Отправляем POST на /circuit/api
+            
+            # Отправляем POST через curl (единственный способ для MIREA API)
             start_time = time.time()
-            response = self.session.post(
-                self.api_url,  # Уже содержит /circuit/api
-                json=payload,
-                headers=headers,
+            result = post_with_curl(
+                self.api_url,
+                payload,
+                self.email,
+                self.password,
                 timeout=self.timeout
             )
             elapsed = time.time() - start_time
-        
-            if response.status_code == 200:
-                result = response.json()
             
-                # Проверяем формат ответа
-                if result.get('status') == True:
-                    logger.info(f"✓ MIREA execution completed in {elapsed:.2f}s")
-                
-                    return {
-                        'success': True,
-                        'measurements': result.get('data', {}),
-                        'execution_time': elapsed,
-                        'shots': shots,
-                        'raw_response': result
-                    }
-                elif result.get('status') == 'email':
-                    logger.warning("MIREA: Results will be sent via email (long queue)")
-                    return {
-                        'success': False,
-                        'error': 'Results queued - will be sent via email',
-                        'message': result.get('text')
-                    }
-                else:
-                    error_msg = result.get('error', 'Unknown error')
-                    logger.error(f"MIREA execution failed: {error_msg}")
-                    return {
-                        'success': False,
-                        'error': error_msg
-                    }
+            # Проверяем ответ от MIREA
+            if result.get('status') == True:
+                logger.info(f"✓ MIREA execution completed in {elapsed:.2f}s")
+                return {
+                    'success': True,
+                    'measurements': result.get('data', {}),
+                    'execution_time': elapsed,
+                    'shots': shots
+                }
             else:
-                logger.error(f"MIREA HTTP error: {response.status_code}")
+                error_msg = result.get('error', 'Unknown error')
+                logger.error(f"MIREA execution failed: {error_msg}")
                 return {
                     'success': False,
-                    'error': f"HTTP {response.status_code}: {response.text}"
+                    'error': error_msg
                 }
-            
         except Exception as e:
             logger.error(f"MIREA execution error: {e}")
             return {
                 'success': False,
                 'error': str(e)
             }
-
     
     def qasm_to_mirea_format(self, qasm_circuit: str) -> Dict[str, Any]:
-        """
-        Конвертирует OpenQASM схему в формат MIREA API
-        
-        Args:
-            qasm_circuit: OpenQASM код
-            
-        Returns:
-            Dict с elementsObject и actualHistoryMap
-        """
+        """Конвертирует QASM в формат MIREA с правильной матрицей actualHistoryMap"""
         elements = {}
-        history = []
+        gate_operations = []  # [(gate_id, qubits_list, title)]
         
-        # Парсим QASM построчно
         lines = qasm_circuit.strip().split('\n')
         qubit_count = 0
-        column = 0
         
         for line in lines:
             line = line.strip()
-            
-            # Пропускаем комментарии и директивы
             if not line or line.startswith('//') or line.startswith('OPENQASM') or line.startswith('include'):
                 continue
             
-            # Определяем количество кубитов
             if line.startswith('qreg'):
-                # qreg q[5];
                 parts = line.split('[')
                 if len(parts) > 1:
                     qubit_count = int(parts[1].split(']')[0])
@@ -182,11 +188,10 @@ class MIREAQuantumAdapter:
             if line.startswith('creg'):
                 continue
             
-            # Парсим гейты
-            gate_info = self.parse_qasm_gate(line, column)
+            # Парсим гейт
+            gate_info = self.parse_qasm_gate(line, 0)
             if gate_info:
                 gate_id = str(uuid.uuid4())
-                
                 elements[gate_id] = {
                     "id": gate_id,
                     "title": gate_info['title'],
@@ -196,21 +201,31 @@ class MIREAQuantumAdapter:
                     "body": None,
                     "idGate": None
                 }
-                
-                # Добавляем в историю
-                if gate_info.get('qubits'):
-                    history.append([gate_id] + gate_info['qubits'])
-                
-                column += 1
+                gate_operations.append((gate_id, gate_info.get('qubits', []), gate_info['title']))
+        
+        # Строим actualHistoryMap как матрицу по линиям кубитов
+        history_map = [[] for _ in range(qubit_count)]
+        
+        for gate_id, qubits, title in gate_operations:
+            if title == 'MEASUREMENT':
+                # Measurement: добавляем gate_id, потом "block"
+                for q in qubits:
+                    history_map[q].append(gate_id)
+                    history_map[q].append('block')
+            else:
+                # Обычный гейт: просто добавляем gate_id
+                for q in qubits:
+                    history_map[q].append(gate_id)
         
         logger.debug(f"Converted QASM: {len(elements)} gates, {qubit_count} qubits")
+        logger.debug(f"History map: {history_map}")
         
         return {
             'elements': elements,
-            'history': history,
+            'history': history_map,
             'qubit_count': qubit_count
         }
-    
+
     def parse_qasm_gate(self, line: str, column: int) -> Optional[Dict[str, Any]]:
         """
         Парсит одну строку QASM с гейтом
@@ -231,9 +246,9 @@ class MIREAQuantumAdapter:
             'y': ('Y', 'base'),
             'z': ('Z', 'base'),
             's': ('S', 'base'),
-            'sdg': ('SREVERSE', 'base'),
+            'sdg': ('S_REVERSE', 'base'),
             't': ('T', 'base'),
-            'tdg': ('TREVERSE', 'base'),
+            'tdg': ('T_REVERSE', 'base'),
             'id': ('I', 'base'),
         }
         
@@ -244,7 +259,7 @@ class MIREAQuantumAdapter:
         parts = line.split()
         if not parts:
             return None
-        
+            
         gate_name = parts[0].lower()
         
         # Однокубитные без параметров
@@ -252,7 +267,6 @@ class MIREAQuantumAdapter:
             title, gate_type = single_qubit_gates[gate_name]
             qubit_str = parts[1] if len(parts) > 1 else 'q[0]'
             qubit_num = self.extract_qubit_number(qubit_str)
-            
             return {
                 'title': title,
                 'type': gate_type,
@@ -265,7 +279,6 @@ class MIREAQuantumAdapter:
             # rx(1.5708) q[0];
             param_start = line.find('(')
             param_end = line.find(')')
-            
             if param_start != -1 and param_end != -1:
                 param_value = float(line[param_start+1:param_end])
                 qubit_str = line[param_end+1:].strip().split()[0]
@@ -298,7 +311,6 @@ class MIREAQuantumAdapter:
         if gate_name == 'measure':
             qubit_str = parts[1] if len(parts) > 1 else 'q[0]'
             qubit_num = self.extract_qubit_number(qubit_str)
-            
             return {
                 'title': 'MEASUREMENT',
                 'type': 'auxiliary',
@@ -311,7 +323,6 @@ class MIREAQuantumAdapter:
             if len(parts) >= 3:
                 control = self.extract_qubit_number(parts[1].rstrip(','))
                 target = self.extract_qubit_number(parts[2])
-                
                 return {
                     'title': 'CONTROL',
                     'type': 'auxiliary',
@@ -341,7 +352,7 @@ class MIREAQuantumAdapter:
             return 0
     
     def process_measurements(
-        self, 
+        self,
         measurements: Dict[str, int],
         num_qubits: int
     ) -> Dict[str, Any]:
@@ -365,16 +376,52 @@ class MIREAQuantumAdapter:
         total_shots = sum(measurements.values())
         
         # Находим наиболее вероятное состояние
-        best_state_int = max(measurements.items(), key=lambda x: x[1])
-        best_state_bin = bin(int(best_state_int[0]))[2:].zfill(num_qubits)
-        
-        probability = best_state_int[1] / total_shots if total_shots > 0 else 0
+        best_state_item = max(measurements.items(), key=lambda x: x[1])
+        best_state_bin = bin(int(best_state_item[0]))[2:].zfill(num_qubits)
+        probability = best_state_item[1] / total_shots if total_shots > 0 else 0
         
         return {
             'best_state': best_state_bin,
-            'best_state_int': int(best_state_int[0]),
-            'counts': best_state_int[1],
+            'best_state_int': int(best_state_item[0]),
+            'counts': best_state_item[1],
             'probability': probability,
             'total_shots': total_shots,
             'all_measurements': measurements
         }
+
+def substitute_qasm_parameters(qasm_code, gamma_values, beta_values):
+    """Подставляет конкретные значения параметров в QASM схему"""
+    import re
+    lines = qasm_code.split('\n')
+    result = []
+    
+    for line in lines:
+        if line.strip().startswith('input float'):
+            continue
+            
+        modified_line = line
+        
+        for i, gamma in enumerate(gamma_values):
+            modified_line = re.sub(
+                rf'gamma_{i}\s*\*\s*([0-9.]+)',
+                lambda m: str(float(m.group(1)) * gamma),
+                modified_line
+            )
+            modified_line = re.sub(
+                rf'([0-9.]+)\s*\*\s*gamma_{i}',
+                lambda m: str(float(m.group(1)) * gamma),
+                modified_line
+            )
+            
+        for i, beta in enumerate(beta_values):
+            modified_line = re.sub(rf'beta_{i}', str(beta), modified_line)
+        
+        modified_line = re.sub(
+            r'r[xyz]\(([0-9.*/ +-]+)\)',
+            lambda m: f"{m.group(0).split('(')[0]}({eval(m.group(1))})",
+            modified_line
+        )
+        
+        result.append(modified_line)
+    
+    return '\n'.join(result)

@@ -27,8 +27,8 @@ class HackathonCSVParser:
             routes = self._parse_routes(getattr(row, "routesstartend"))
             if matrix.shape[0] != matrix.shape[1]:
                 raise ValueError(f"Graph row {row_order}: adjacency matrix must be square, got {matrix.shape}")
-            if len(routes) != 500:
-                raise ValueError(f"Graph row {row_order}: routes_start_end must contain exactly 500 pairs, got {len(routes)}")
+#             if len(routes) != 500:
+#                 raise ValueError(f"Graph row {row_order}: routes_start_end must contain exactly 500 pairs, got {len(routes)}")
             self._validate_graph_data(row_order, matrix, routes)
             graphs[row_order] = {
                 "matrix": matrix,
