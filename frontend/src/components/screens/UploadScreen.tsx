@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { FileText, X, Zap, CheckCircle } from 'lucide-react';
+import { FileText, X, Zap, CheckCircle, Upload, Cpu, BarChart3 } from 'lucide-react';
 import { validateFile, formatFileSize } from '../../utils/validators';
 
 interface UploadScreenProps {
@@ -66,22 +66,34 @@ export function UploadScreen({ onFileSelect }: UploadScreenProps) {
   }, [selectedFile, onFileSelect]);
 
   return (
-    <div className="upload-screen">
-      <div className="upload-container">
+    <div className="min-h-screen bg-white flex items-center justify-center p-6">
+      <div className="w-full max-w-2xl">
         {/* Header */}
-        <header className="upload-header">
-          <div className="logo">
-            <span className="logo-icon">⚛️</span>
-            <h1 className="logo-text">Quantum Traffic Optimizer</h1>
+        <header className="text-center mb-8">
+          <div className="flex items-center justify-center gap-4 mb-4">
+            <div 
+              className="w-12 h-12 rounded-full flex items-center justify-center"
+              style={{ background: 'linear-gradient(135deg, #003274, #4495D1)' }}
+            >
+              <span className="text-2xl text-white">⚛️</span>
+            </div>
+            <h1 className="text-3xl font-bold" style={{ color: '#003274' }}>
+              UrbanQ
+            </h1>
           </div>
-          <p className="subtitle">Hybrid Classical-Quantum Route Solver for Advanced Traffic Optimization</p>
+          <p className="text-lg font-medium" style={{ color: '#4495D1' }}>Quantum Traffic Optimizer</p>
+          <p className="text-gray-600 mt-2">Hybrid Classical-Quantum Route Solver for Advanced Traffic Optimization</p>
         </header>
 
         {/* Upload Zone */}
-        <div className="upload-zone-wrapper">
+        <div className="mb-8">
           {!selectedFile ? (
             <div
-              className={`upload-zone ${isDragging ? 'dragging' : ''}`}
+              className={`border-2 border-dashed rounded-2xl p-12 text-center transition-all cursor-pointer ${
+                isDragging 
+                  ? 'border-blue-300 bg-blue-50' 
+                  : 'border-gray-300 bg-gray-50 hover:bg-gray-100'
+              }`}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
@@ -91,43 +103,84 @@ export function UploadScreen({ onFileSelect }: UploadScreenProps) {
                 id="file-input"
                 accept=".csv,.txt"
                 onChange={handleFileInput}
-                className="file-input-hidden"
+                className="hidden"
               />
-              <label htmlFor="file-input" className="upload-label">
-                <FileText className="upload-icon" size={48} />
-                <h3 className="upload-title">Drag & Drop CSV/TXT File</h3>
-                <p className="upload-subtitle">or click to browse</p>
-                <div className="upload-info">
-                  <span className="info-item">✓ Max size: 64MB</span>
-                  <span className="info-item">✓ Formats: .csv, .txt</span>
+              <label htmlFor="file-input" className="cursor-pointer">
+                <div 
+                  className="w-16 h-16 rounded-full flex items-center justify-center mb-4 mx-auto"
+                  style={{ background: 'linear-gradient(135deg, #003274, #4495D1)' }}
+                >
+                  <Upload className="w-8 h-8 text-white" />
+                </div>
+                <h3 className="text-xl font-semibold mb-2" style={{ color: '#003274' }}>Drag & Drop CSV/TXT File</h3>
+                <p className="text-gray-600 mb-4">or click to browse</p>
+                <div className="flex justify-center gap-6 text-sm text-gray-500">
+                  <span className="flex items-center gap-1">
+                    <div 
+                      className="w-4 h-4 rounded-full flex items-center justify-center"
+                      style={{ background: 'linear-gradient(135deg, #56C02B, #059669)' }}
+                    >
+                      <CheckCircle className="w-3 h-3 text-white" />
+                    </div>
+                    Max size: 64MB
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <div 
+                      className="w-4 h-4 rounded-full flex items-center justify-center"
+                      style={{ background: 'linear-gradient(135deg, #56C02B, #059669)' }}
+                    >
+                      <CheckCircle className="w-3 h-3 text-white" />
+                    </div>
+                    Formats: .csv, .txt
+                  </span>
                 </div>
               </label>
             </div>
           ) : (
-            <div className="file-selected">
-              <div className="file-info">
-                <FileText className="file-icon" size={32} />
-                <div className="file-details">
-                  <h4 className="file-name">{selectedFile.name}</h4>
-                  <p className="file-size">{formatFileSize(selectedFile.size)}</p>
+            <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+              <div className="flex items-center gap-4 mb-4">
+                <div 
+                  className="w-12 h-12 rounded-full flex items-center justify-center"
+                  style={{ background: 'linear-gradient(135deg, #56C02B, #059669)' }}
+                >
+                  <FileText className="w-6 h-6 text-white" />
                 </div>
-                <button onClick={handleClearFile} className="clear-button" aria-label="Remove file">
-                  <X size={20} />
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-semibold truncate" style={{ color: '#003274' }}>{selectedFile.name}</h4>
+                  <p className="text-gray-600 text-sm">{formatFileSize(selectedFile.size)}</p>
+                </div>
+                <button 
+                  onClick={handleClearFile} 
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                  aria-label="Remove file"
+                >
+                  <X size={16} />
                 </button>
               </div>
-              <button onClick={handleAnalyze} className="analyze-button">
-                <Zap size={20} />
+              <button 
+                onClick={handleAnalyze} 
+                className="w-full text-white py-3 px-6 rounded-xl font-semibold flex items-center justify-center gap-3 hover:opacity-90 transition-opacity"
+                style={{ background: 'linear-gradient(135deg, #003274, #4495D1)' }}
+              >
+                <div className="w-6 h-6 rounded-full flex items-center justify-center bg-white bg-opacity-20">
+                  <Zap className="w-4 h-4 text-white" />
+                </div>
                 <span>Analyze with Quantum AI</span>
               </button>
             </div>
           )}
 
           {errors.length > 0 && (
-            <div className="errors-container">
+            <div className="mt-4 space-y-2">
               {errors.map((error, i) => (
-                <div key={i} className="error-message">
-                  <span className="error-icon">⚠️</span>
-                  <span>{error}</span>
+                <div key={i} className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+                  <div 
+                    className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ background: 'linear-gradient(135deg, #E20072, #dc2626)' }}
+                  >
+                    <span className="text-white text-xs font-bold">!</span>
+                  </div>
+                  <span className="text-red-700 text-sm">{error}</span>
                 </div>
               ))}
             </div>
@@ -135,24 +188,44 @@ export function UploadScreen({ onFileSelect }: UploadScreenProps) {
         </div>
 
         {/* Info Section */}
-        <div className="info-section">
-          <h3 className="info-title">What we do:</h3>
-          <ul className="info-list">
-            <li className="info-list-item">
-              <CheckCircle className="check-icon" size={20} />
-              <span>Parse graph adjacency matrix from your data</span>
+        <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+          <h3 className="text-xl font-semibold mb-4" style={{ color: '#003274' }}>What we do:</h3>
+          <ul className="space-y-4">
+            <li className="flex items-center gap-4">
+              <div 
+                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: 'linear-gradient(135deg, #003274, #4495D1)' }}
+              >
+                <FileText className="w-4 h-4 text-white" />
+              </div>
+              <span className="text-gray-700">Parse graph adjacency matrix from your data</span>
             </li>
-            <li className="info-list-item">
-              <CheckCircle className="check-icon" size={20} />
-              <span>Run classical algorithms (Dijkstra, Greedy)</span>
+            <li className="flex items-center gap-4">
+              <div 
+                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: 'linear-gradient(135deg, #15256D, #003274)' }}
+              >
+                <Cpu className="w-4 h-4 text-white" />
+              </div>
+              <span className="text-gray-700">Run classical algorithms (Dijkstra, Greedy)</span>
             </li>
-            <li className="info-list-item">
-              <CheckCircle className="check-icon" size={20} />
-              <span>Execute quantum optimization (QUBO + QAOA)</span>
+            <li className="flex items-center gap-4">
+              <div 
+                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: 'linear-gradient(135deg, #4495D1, #3b82f6)' }}
+              >
+                <Zap className="w-4 h-4 text-white" />
+              </div>
+              <span className="text-gray-700">Execute quantum optimization (QUBO + QAOA)</span>
             </li>
-            <li className="info-list-item">
-              <CheckCircle className="check-icon" size={20} />
-              <span>Compare results and visualize improvements</span>
+            <li className="flex items-center gap-4">
+              <div 
+                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: 'linear-gradient(135deg, #259789, #0d9488)' }}
+              >
+                <BarChart3 className="w-4 h-4 text-white" />
+              </div>
+              <span className="text-gray-700">Compare results and visualize improvements</span>
             </li>
           </ul>
         </div>

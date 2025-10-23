@@ -51,7 +51,7 @@
 
 .route-card.expanded {
     border-color: var(--color-urban-accent);
-    background: linear-gradient(135deg, var(--color-surface), rgba(68, 149, 209, 0.05));
+    background: var(--color-surface);
 }
 
 .route-card.advantage {
@@ -65,10 +65,11 @@
     padding: 1.25rem;
     cursor: pointer;
     transition: all 0.2s ease;
+    background: var(--color-surface);
 }
 
 .route-header:hover {
-    background: rgba(68, 149, 209, 0.03);
+    background: var(--color-secondary);
 }
 
 .route-identity {
@@ -222,6 +223,7 @@
     border-top: 1px solid var(--color-card-border);
     padding: 1.5rem;
     animation: slideDown 0.3s ease;
+    background: var(--color-surface);
 }
 
 .details-grid {
@@ -239,12 +241,12 @@
 
 .solution-section.quantum {
     border-color: var(--color-urban-accent);
-    background: linear-gradient(135deg, var(--color-surface), rgba(68, 149, 209, 0.05));
+    background: var(--color-background);
 }
 
 .solution-section.classical {
     border-color: var(--color-urban-dark);
-    background: linear-gradient(135deg, var(--color-surface), rgba(21, 37, 109, 0.05));
+    background: var(--color-background);
 }
 
 .solution-header {
@@ -294,6 +296,12 @@
     background: rgba(21, 37, 109, 0.15);
     color: var(--color-urban-dark);
     border: 1px solid rgba(21, 37, 109, 0.3);
+}
+
+.solution-badge.neutral {
+    background: rgba(211, 211, 211, 0.15);
+    color: var(--color-urban-gray);
+    border: 1px solid rgba(211, 211, 211, 0.3);
 }
 
 .path-visualization {
@@ -442,6 +450,22 @@
     color: var(--color-text);
 }
 
+.no-solution-message {
+    text-align: center;
+    padding: 2rem 1rem;
+    color: var(--color-text-secondary);
+}
+
+.no-solution-message p {
+    margin: 0 0 0.5rem 0;
+    line-height: 1.5;
+}
+
+.no-solution-subtitle {
+    font-size: 0.85rem;
+    opacity: 0.8;
+}
+
 @keyframes slideDown {
     from {
         opacity: 0;
@@ -493,26 +517,4 @@
     .path-nodes {
         justify-content: center;
     }
-}
-
-.solution-badge.neutral {
-    background: rgba(211, 211, 211, 0.15);
-    color: var(--color-urban-gray);
-    border: 1px solid rgba(211, 211, 211, 0.3);
-}
-
-.no-solution-message {
-    text-align: center;
-    padding: 2rem 1rem;
-    color: var(--color-text-secondary);
-}
-
-.no-solution-message p {
-    margin: 0 0 0.5rem 0;
-    line-height: 1.5;
-}
-
-.no-solution-subtitle {
-    font-size: 0.85rem;
-    opacity: 0.8;
 }
