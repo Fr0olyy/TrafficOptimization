@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Hybrid Traffic Solver: Iterative Classical for Solution + MIREA for Metrics + Scheme Archiving
+Hybrid Traffic Solver: Iterative Classical for Solution + MIREA for Metrics + Robust Scheme Archiving
 """
 import sys, json, argparse, time, base64, random, os
 from csv_parser import parse_dataset
@@ -18,12 +18,11 @@ except ImportError:
 # -------------------------
 
 
-def save_qasm_to_json(qasm_code: str, graph_index: int, route_index: int, output_dir: str = "quantum_schemes"):
+def save_qasm_to_json(qasm_code: str, graph_index: int, route_index: int, output_dir: str = "py/quantum_schemes"):
     """
     Сохраняет QASM-код в JSON-файл в указанную директорию.
     """
     try:
-        # Папка будет создана внутри контейнера в /app/quantum_schemes
         os.makedirs(output_dir, exist_ok=True)
         filename = f"graph_{graph_index}_route_{route_index}.json"
         filepath = os.path.join(output_dir, filename)
@@ -46,7 +45,7 @@ def save_qasm_to_json(qasm_code: str, graph_index: int, route_index: int, output
 
 def get_mirea_metrics_for_sample(optimizer, start, end, p_layers, mirea_client, graph_idx, route_idx):
     """
-    Вспомогательная функция для получения метрик от MIREA, теперь с сохранением схемы.
+    Вспомогательная функция для получения метрик от MIREA, теперь с надежным сохранением схемы.
     """
     if not mirea_client:
         return {'success': False, 'error': 'MIREA client not initialized'}
@@ -55,11 +54,14 @@ def get_mirea_metrics_for_sample(optimizer, start, end, p_layers, mirea_client, 
         qasm_result = optimizer.solve_quantum(start, end, p=p_layers)
         qasm_circuit = qasm_result.get('qasm')
 
+        # --- ИСПРАВЛЕНИЕ: СНАЧАЛА ПРОВЕРЯЕМ, ПОТОМ СОХРАНЯЕМ ---
         if not qasm_circuit:
+            print(f"  ✗ QASM generation failed for route {route_idx}", file=sys.stderr)
             return {'success': False, 'error': 'QASM generation failed'}
 
-        # <<< --- НОВЫЙ ШАГ: СОХРАНЯЕМ СХЕМУ ПЕРЕД ОТПРАВКОЙ --- >>>
+        # Теперь мы уверены, что qasm_circuit не пустой
         save_qasm_to_json(qasm_circuit, graph_idx, route_idx)
+        # ---------------------------------------------------------
 
         t0_mirea = time.time()
         mirea_result = mirea_client.execute_circuit(
@@ -80,6 +82,7 @@ def get_mirea_metrics_for_sample(optimizer, start, end, p_layers, mirea_client, 
             return {'success': False, 'error': mirea_result.get('error', 'Unknown MIREA error')}
             
     except Exception as e:
+        print(f"  ✗ Exception in get_mirea_metrics for route {route_idx}: {e}", file=sys.stderr)
         return {'success': False, 'error': str(e)}
 
 
@@ -147,7 +150,6 @@ def main():
             
             for sample_idx in sample_indices:
                 start_node, end_node = routes_to_plan[sample_idx]
-                # Передаем индексы для сохранения файла
                 metrics = get_mirea_metrics_for_sample(optimizer, start_node, end_node, args.p_layers, mirea_client, graph_original_index, sample_idx)
                 mirea_metrics_samples.append({
                     "route_index_sampled": sample_idx,
@@ -203,3 +205,4 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+

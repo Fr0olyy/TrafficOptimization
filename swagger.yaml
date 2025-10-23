@@ -1,0 +1,167 @@
+openapi: 3.0.0
+info:
+  title: "Quantum Traffic Optimizer API"
+  description: "API для оптимизации дорожного трафика с использованием гибридного квантово-вдохновленного алгоритма. Сервис принимает на вход CSV-файл с графом дорожной сети и маршрутами, а на выходе предоставляет оптимальное решение и демонстрационные метрики с квантового компьютера MIREA."
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:9000
+    description: Локальный сервер разработки
+
+paths:
+  /process:
+    post:
+      summary: "Запустить процесс оптимизации трафика"
+      description: "Загружает CSV-файл с графом и маршрутами, запускает гибридный алгоритм оптимизации и возвращает JSON-объект с результатами, включая ссылку на скачивание итогового файла `submission.csv` и демонстрационные метрики от MIREA."
+      operationId: processTrafficData
+      requestBody:
+        description: "CSV-файл с данными о графе и маршрутах."
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: "Файл в формате .csv или .txt"
+      responses:
+        '200':
+          description: "Успешная обработка. Возвращает JSON с результатами."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessResponse'
+        '400':
+          description: "Ошибка в запросе (например, файл не приложен или неверный формат)."
+        '500':
+          description: "Внутренняя ошибка сервера во время обработки (например, сбой Python-скрипта)."
+
+  /download:
+    get:
+      summary: "Скачать результирующий файл"
+      description: "Скачивает сгенерированный файл (например, `submission.csv`) по его уникальному ID, полученному из ответа на запрос `/process`."
+      operationId: downloadResultFile
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: "Уникальный ID файла, полученный в поле `downloads.submission_csv`."
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "Успешно. Возвращает файл для скачивания."
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: "Параметр `id` не указан."
+        '404':
+          description: "Файл с указанным `id` не найден."
+
+components:
+  schemas:
+    ProcessResponse:
+      type: object
+      description: "Основной объект ответа после успешной обработки."
+      properties:
+        ok:
+          type: boolean
+          example: true
+        downloads:
+          type: object
+          properties:
+            submission_csv:
+              type: string
+              description: "ID для скачивания итогового `submission.csv` через эндпоинт `/download`."
+              example: "1761257388590124378"
+        elapsed_ms:
+          type: integer
+          description: "Общее время обработки запроса на сервере в миллисекундах."
+        parameters:
+          type: object
+          properties:
+            reroute_fraction:
+              type: number
+            solver_iterations:
+              type: integer
+        perGraph:
+          type: array
+          description: "Массив результатов для каждого графа, найденного во входном файле."
+          items:
+            $ref: '#/components/schemas/GraphResult'
+        summary:
+          type: object
+          properties:
+            mirea_samples_requested:
+              type: integer
+            solver_iterations:
+              type: integer
+            total_graphs:
+              type: integer
+
+    GraphResult:
+      type: object
+      properties:
+        graph_index:
+          type: integer
+        stats:
+          $ref: '#/components/schemas/GraphStats'
+        mirea_metric_samples:
+          type: array
+          description: "Массив с демонстрационными метриками от MIREA."
+          items:
+            $ref: '#/components/schemas/MireaMetricSample'
+
+    GraphStats:
+      type: object
+      description: "Статистика по результатам работы итеративного алгоритма."
+      properties:
+        final_cost:
+          type: number
+          description: "Финальная (минимизированная) стоимость маршрутов с учетом пробок."
+        iterations:
+          type: integer
+        time_ms:
+          type: number
+        total_routes:
+          type: integer
+
+    MireaMetricSample:
+      type: object
+      description: "Результат одного демонстрационного запуска на MIREA."
+      properties:
+        route_index_sampled:
+          type: integer
+        start:
+          type: integer
+        end:
+          type: integer
+        mirea_metrics:
+          $ref: '#/components/schemas/MireaMetrics'
+    
+    MireaMetrics:
+      type: object
+      description: "Детальные метрики, полученные от MIREA."
+      properties:
+        success:
+          type: boolean
+        measurements:
+          type: object
+          description: "Словарь с результатами измерений состояний кубитов."
+          additionalProperties:
+            type: integer
+        time:
+          type: number
+          description: "Время выполнения на квантовом компьютере."
+        shots:
+          type: integer
+        algorithm:
+          type: string
+        error:
+          type: string
+          description: "Текст ошибки, если запуск не удался."
