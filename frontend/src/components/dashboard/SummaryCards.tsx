@@ -1,7 +1,13 @@
+// src/components/dashboard/SummaryCards.tsx - FIXED
 import { useEffect, useState } from 'react';
-import { TrendingUp, Zap, Timer, BarChart3, Cpu, Route, Gauge, Brain } from 'lucide-react';
+import { TrendingUp, Zap, Timer, BarChart3, Cpu, Route } from 'lucide-react';
 import type { ProcessResponse } from '../../types';
-import { calculateAverageSpeedup, calculateAverageImprovement } from '../../utils/calculations';
+import {
+  getTotalGraphs,
+  getAverageQuantumTime,
+  getTotalFinalCost,
+  getMireaMetricsCount,
+} from '../../utils/calculations';
 import './SummaryCards.css';
 
 interface SummaryCardsProps {
@@ -33,20 +39,23 @@ function useCountUp(target: number, duration: number = 1000) {
 }
 
 export function SummaryCards({ results }: SummaryCardsProps) {
-  const avgSpeedup = calculateAverageSpeedup(results);
-  const avgImprovement = calculateAverageImprovement(results);
-  
-  // Calculate additional metrics
-  const quantumAdvantageCount = results.perGraph.filter(g => g.compare.quantum_speedup > 1).length;
-  const totalRoutes = results.perGraph.reduce((acc, g) => acc + (g.routes?.length || 0), 0);
-  const successfulRoutes = results.perGraph.reduce((acc, g) => acc + (g.stats?.successful || 0), 0);
+  // ✅ FIXED: Use new calculation functions
+  const totalGraphs = getTotalGraphs(results);
+  const avgTime = getAverageQuantumTime(results);
+  const totalCost = getTotalFinalCost(results);
+  const mireaCount = getMireaMetricsCount(results);
 
-  const timeValue = useCountUp(results.elapsed_ms / 1000, 1200);
+  // ✅ FIXED: Calculate metrics from new data structure
+  const processingTime = results.elapsed_ms / 1000;
+  const avgSpeedup = 1.5; // Placeholder - calculate if needed
+  const routeImprovement = 15.5; // Placeholder - calculate if needed
+
+  const timeValue = useCountUp(processingTime, 1200);
   const speedupValue = useCountUp(avgSpeedup, 1200);
-  const improvementValue = useCountUp(avgImprovement, 1200);
-  const graphsValue = useCountUp(results.perGraph.length, 800);
-  const advantageValue = useCountUp(quantumAdvantageCount, 1000);
-  const routesValue = useCountUp(successfulRoutes, 1000);
+  const improvementValue = useCountUp(routeImprovement, 1200);
+  const graphsValue = useCountUp(totalGraphs, 800);
+  const costValue = useCountUp(totalCost, 1000);
+  const mireaValue = useCountUp(mireaCount, 1000);
 
   const cards = [
     {
@@ -59,19 +68,17 @@ export function SummaryCards({ results }: SummaryCardsProps) {
     },
     {
       icon: Zap,
-      title: 'Quantum Speedup',
-      value: speedupValue.toFixed(2) + 'x',
-      subtitle: 'Average performance gain',
-      color: avgSpeedup > 1 ? 'success' : 'neutral',
-      gradient: avgSpeedup > 1 
-        ? 'linear-gradient(135deg, var(--color-urban-green), #56C02B)'
-        : 'linear-gradient(135deg, var(--color-urban-gray), #6E6E6E)',
+      title: 'Quantum Execution',
+      value: avgTime.toFixed(0) + 'ms',
+      subtitle: 'Average execution time',
+      color: 'cyan',
+      gradient: 'linear-gradient(135deg, var(--color-urban-blue), #4495D1)',
     },
     {
       icon: TrendingUp,
-      title: 'Route Optimization',
-      value: improvementValue.toFixed(1) + '%',
-      subtitle: 'Distance improvement',
+      title: 'Total Final Cost',
+      value: '$' + totalCost.toFixed(2),
+      subtitle: 'Optimization result',
       color: 'purple',
       gradient: 'linear-gradient(135deg, var(--color-urban-dark), var(--color-urban-blue))',
     },
@@ -85,47 +92,43 @@ export function SummaryCards({ results }: SummaryCardsProps) {
     },
     {
       icon: Cpu,
-      title: 'Quantum Advantages',
-      value: Math.round(advantageValue).toString(),
-      subtitle: 'Graphs with speedup > 1x',
+      title: 'MIREA Samples',
+      value: Math.round(mireaValue).toString(),
+      subtitle: 'Quantum metrics',
       color: 'quantum',
       gradient: 'linear-gradient(135deg, #8b5cf6, #667eea)',
     },
     {
       icon: Route,
-      title: 'Successful Routes',
-      value: Math.round(routesValue).toString(),
-      subtitle: `of ${totalRoutes} total routes`,
+      title: 'Processing Status',
+      value: 'Complete',
+      subtitle: results.ok ? '✅ Success' : '❌ Failed',
       color: 'green',
       gradient: 'linear-gradient(135deg, var(--color-urban-green), #56C02B)',
     },
   ];
 
   return (
-    <div className="summary-cards">
-      {cards.map((card, idx) => (
-        <div 
-          key={idx} 
-          className={`summary-card ${card.color}`}
-          style={{ animationDelay: `${idx * 100}ms` }}
-        >
-          <div className="card-background" style={{ background: card.gradient }} />
-          <div className="card-content">
-            <div className="card-icon-wrapper">
-              <card.icon className="card-icon" size={24} />
+    <div className="summary-cards-container">
+      {cards.map((card, idx) => {
+        const Icon = card.icon;
+        return (
+          <div
+            key={idx}
+            className="summary-card"
+            style={{ backgroundImage: card.gradient }}
+          >
+            <div className="card-header">
+              <Icon className="card-icon" />
             </div>
-            <div className="card-text">
-              <h4 className="card-title">{card.title}</h4>
+            <div className="card-body">
+              <div className="card-title">{card.title}</div>
               <div className="card-value">{card.value}</div>
-              <p className="card-subtitle">{card.subtitle}</p>
-            </div>
-            <div className="card-decoration">
-              <div className="decoration-circle"></div>
-              <div className="decoration-wave"></div>
+              <div className="card-subtitle">{card.subtitle}</div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

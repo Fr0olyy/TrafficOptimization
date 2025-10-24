@@ -1,41 +1,48 @@
+// src/utils/calculations.ts
 import type { ProcessResponse, GraphResult } from '../types';
 
 /**
- * Calculate average quantum speedup across all graphs
+ * Calculate total graphs processed
  */
-export function calculateAverageSpeedup(results: ProcessResponse): number {
+export function getTotalGraphs(results: ProcessResponse): number {
+  return results.perGraph?.length ?? 0;
+}
+
+/**
+ * Calculate average quantum execution time
+ */
+export function getAverageQuantumTime(results: ProcessResponse): number {
   if (!results.perGraph || results.perGraph.length === 0) return 0;
-  
-  const sum = results.perGraph.reduce(
-    (acc, graph) => acc + graph.compare.quantum_speedup,
-    0
-  );
-  
+  const sum = results.perGraph.reduce((acc, graph) => acc + (graph.stats?.time_ms ?? 0), 0);
   return sum / results.perGraph.length;
 }
 
 /**
- * Calculate average distance improvement
- * Returns percentage: (classical - quantum) / classical * 100
+ * Calculate total final cost
  */
-export function calculateAverageImprovement(results: ProcessResponse): number {
+export function getTotalFinalCost(results: ProcessResponse): number {
   if (!results.perGraph || results.perGraph.length === 0) return 0;
-  
-  const improvements = results.perGraph.map(graph => {
-    const classicalDist = graph.classical.enhanced.total_distance;
-    const quantumDist = graph.quantum.enhanced.total_distance;
-    return ((classicalDist - quantumDist) / classicalDist) * 100;
-  });
-  
-  const sum = improvements.reduce((acc, val) => acc + val, 0);
-  return sum / improvements.length;
+  return results.perGraph.reduce((acc, graph) => acc + (graph.stats?.final_cost ?? 0), 0);
 }
 
 /**
- * Get winner for a specific graph
+ * Get MIREA metrics count
  */
-export function getWinner(graph: GraphResult): 'classical' | 'quantum' {
-  return graph.compare.quantum_speedup > 1 ? 'quantum' : 'classical';
+export function getMireaMetricsCount(results: ProcessResponse): number {
+  if (!results.perGraph || results.perGraph.length === 0) return 0;
+  return results.perGraph.reduce(
+    (acc, graph) => acc + (graph.mirea_metric_samples?.length ?? 0),
+    0
+  );
+}
+
+/**
+ * Get average iterations across graphs
+ */
+export function getAverageIterations(results: ProcessResponse): number {
+  if (!results.perGraph || results.perGraph.length === 0) return 0;
+  const sum = results.perGraph.reduce((acc, graph) => acc + (graph.stats?.iterations ?? 0), 0);
+  return sum / results.perGraph.length;
 }
 
 /**
