@@ -1,9 +1,15 @@
+// src/services/api.ts
 import type { ProcessResponse } from '../types';
 
 /**
  * API Client for Quantum Traffic Optimizer Backend
  * Handles all communication with Go server on port 9000
+ * 
+ * Backend returns:
+ * - POST /process: uploads CSV, returns ProcessResponse with submission_csv ID
+ * - GET /download: downloads file by ID
  */
+
 export class OptimizationAPI {
   private baseUrl: string;
 
@@ -14,7 +20,7 @@ export class OptimizationAPI {
   /**
    * Process uploaded file and run optimization
    * @param file - CSV or TXT file
-   * @returns Promise with optimization results
+   * @returns Promise with optimization results including submission_csv ID
    */
   async processFile(file: File): Promise<ProcessResponse> {
     const formData = new FormData();
@@ -32,7 +38,7 @@ export class OptimizationAPI {
       }
 
       const data: ProcessResponse = await response.json();
-      
+
       if (!data.ok) {
         throw new Error('Processing failed on server');
       }
@@ -42,13 +48,14 @@ export class OptimizationAPI {
       if (error instanceof TypeError && error.message.includes('fetch')) {
         throw new Error('Connection failed. Is the server running on port 9000?');
       }
+
       throw error;
     }
   }
 
   /**
-   * Get download URL for optimized CSV
-   * @param id - Download ID from process response
+   * Get download URL for optimized CSV (submission.csv)
+   * @param id - Download ID from process response (downloads.submission_csv)
    * @returns Full download URL
    */
   getDownloadUrl(id: string): string {
@@ -56,14 +63,14 @@ export class OptimizationAPI {
   }
 
   /**
-   * Download CSV file
-   * @param id - Download ID
-   * @param filename - Desired filename
+   * Download submission CSV file
+   * @param id - Download ID from results.downloads.submission_csv
+   * @param filename - Desired filename (default: submission.csv)
    */
-  async downloadFile(id: string, filename: string): Promise<void> {
+  async downloadFile(id: string, filename: string = 'submission.csv'): Promise<void> {
     try {
       const response = await fetch(this.getDownloadUrl(id));
-      
+
       if (!response.ok) {
         throw new Error('Download failed');
       }

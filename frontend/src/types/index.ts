@@ -59,8 +59,7 @@ export interface ProcessResponse {
   ok: boolean;
   perGraph: GraphResult[];
   downloads: {
-    classical_csv: string;
-    quantum_csv: string;
+    submission_csv: string;
   };
   elapsed_ms: number;
 }
