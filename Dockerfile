@@ -62,3 +62,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 EXPOSE 9000
 
 CMD ["/app/server"]
+
+# В конце вашего Dockerfile
+RUN mkdir -p /app/saved_qasm_schemes && chmod 777 /app/saved_qasm_schemes
+
