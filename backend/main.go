@@ -11,8 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -33,7 +31,6 @@ func getenv(k, def string) string {
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-
 	mux := http.NewServeMux()
 
 	webDir := getenv("WEB_DIR", "web")
@@ -62,7 +59,7 @@ func main() {
 		mux.ServeHTTP(w, r)
 	})
 
-	addr := ":" + getenv("PORT", "9001")
+	addr := ":" + getenv("PORT", "9000")
 	log.Printf("Listening on %s (web dir: %s)", addr, webDir)
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
@@ -109,97 +106,111 @@ func process(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create file error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 	if _, err := io.Copy(dst, file); err != nil {
 		http.Error(w, "save file error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	_ = dst.Close()
 
-	// Параметры для итеративного решателя и MIREA
-	const (
-		iterations      = 15
-		rerouteFraction = 0.1
-		mireaSamples    = 3 // Количество маршрутов для сбора метрик MIREA
-		requestTimeout  = 30 * time.Minute
-	)
-
-	log.Printf("Parameters: iterations=%d, reroute_fraction=%.2f, mirea_samples=%d",
-		iterations, rerouteFraction, mireaSamples)
-
+	const requestTimeout = 30 * time.Minute
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
-	// Формируем аргументы для гибридного runner.py
+	// Запуск runner.py
 	runnerPath := filepath.Join("py", "runner.py")
 	args := []string{
 		runnerPath,
 		"--csv-file", dstPath,
-		"--iterations", itoa(iterations),
-		"--reroute-fraction", fmt.Sprintf("%.2f", rerouteFraction),
-		// <<< --- ВОТ ИСПРАВЛЕНИЕ: ВОЗВРАЩАЕМ ФЛАГИ ДЛЯ MIREA --- >>>
+		"--iterations", "15",
+		"--reroute-fraction", "0.1",
+		"--max-routes", "999999",
+		"--p-layers", "1",
+		"--workers", "4",
 		"--use-mirea",
-		"--mirea-email", "Mr.hectop73@gmail.com",
-		"--mirea-password", "32f04ecf2dbd712e5ec5cb9c02d0df41",
-		"--mirea-samples", itoa(mireaSamples),
+		"--mirea-email", getenv("MIREA_EMAIL", ""),
+		"--mirea-password", getenv("MIREA_PASSWORD", ""),
+		"--mirea-shots", getenv("MIREA_SHOTS", "1024"),
+		"--mirea-samples", "2",
+		"--max-total-mirea-calls", "10",
 	}
 
-	type pyResponse struct {
-		OK        bool           `json:"ok"`
-		Results   []any          `json:"results"`
-		CSVBase64 string         `json:"csv_base64"`
-		CSVName   string         `json:"csv_filename"`
-		Summary   map[string]any `json:"summary"`
-	}
-
-	log.Println("Running hybrid optimization (classical solver + MIREA metrics)...")
-	outBytes, err := runPython(ctx, args)
+	log.Println("Running hybrid optimization...")
+	output, err := runPython(ctx, args)
 	if err != nil {
-		log.Printf("Python script error: %v", err)
-		http.Error(w, "Python script failed", http.StatusInternalServerError)
+		log.Printf("Quantum error: %v", err)
+		log.Printf("Output: %s", truncate(string(output), 1000))
+		http.Error(w, fmt.Sprintf("Python error: %v\n%s", err, string(output)), http.StatusInternalServerError)
 		return
 	}
 
-	var pyResp pyResponse
-	if err := json.Unmarshal(outBytes, &pyResp); err != nil {
-		log.Printf("Failed to parse python response: %v", err)
+	// Парсим JSON как map
+	var result map[string]interface{}
+	if err := json.Unmarshal(output, &result); err != nil {
+		log.Printf("Failed to parse python results: %v", err)
+		log.Printf("Output: %s", truncate(string(output), 1000))
 		http.Error(w, "Failed to parse python results", http.StatusInternalServerError)
 		return
 	}
 
-	var submissionID string
-	if pyResp.CSVBase64 != "" {
-		b, err := base64.StdEncoding.DecodeString(pyResp.CSVBase64)
-		if err == nil {
-			submissionID = genID()
-			store.Store(submissionID, csvRecord{Name: safeName(pyResp.CSVName, "submission.csv"), Data: b})
+	downloads := map[string]string{}
+
+	// Новый формат: массив файлов [{name, base64}]
+	if filesAny, ok := result["csv_files"].([]any); ok {
+		for _, f := range filesAny {
+			m, _ := f.(map[string]any)
+			name, _ := m["name"].(string)
+			b64, _ := m["base64"].(string)
+			if name != "" && b64 != "" {
+				b, _ := base64.StdEncoding.DecodeString(b64)
+				id := genID()
+				store.Store(id, csvRecord{
+					Name: safeName(name, "file.csv"),
+					Data: b,
+				})
+				// Ключи для фронта
+				switch name {
+				case "classic.csv":
+					downloads["classic_csv"] = id
+					downloads["submission_csv"] = id // обратная совместимость
+				case "quantum.csv":
+					downloads["quantum_csv"] = id
+				default:
+					downloads[name] = id
+				}
+			}
+		}
+	} else {
+		// Старый формат: одно поле csv_base64/csv_filename
+		csvBase64, _ := result["csv_base64"].(string)
+		csvFilename, _ := result["csv_filename"].(string)
+		if csvBase64 != "" {
+			b, _ := base64.StdEncoding.DecodeString(csvBase64)
+			id := genID()
+			store.Store(id, csvRecord{
+				Name: safeName(csvFilename, "submission.csv"),
+				Data: b,
+			})
+			downloads["submission_csv"] = id
 		}
 	}
 
-	// Формируем финальный ответ для фронтенда
-	finalResponse := map[string]any{
-		"ok":       true,
-		"perGraph": pyResp.Results, // Переименовано для совместимости с фронтендом
-		"downloads": map[string]string{
-			"submission_csv": submissionID,
-		},
+	finalResponse := map[string]interface{}{
+		"ok":         result["ok"],
+		"results":    result["results"],
+		"summary":    result["summary"],
 		"elapsed_ms": time.Since(start).Milliseconds(),
-		"parameters": map[string]any{
-			"solver_iterations": iterations,
-			"reroute_fraction":  rerouteFraction,
+		"downloads":  downloads,
+		"parameters": map[string]interface{}{
+			"solver_iterations": 15,
+			"reroute_fraction":  0.1,
+			"mirea_enabled":     true,
 		},
-		"summary": pyResp.Summary,
 	}
-
 	writeJSON(w, http.StatusOK, finalResponse)
 }
 
 func download(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
-	if id == "" {
-		http.Error(w, "id parameter is required", http.StatusBadRequest)
-		return
-	}
 	v, ok := store.Load(id)
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -212,30 +223,24 @@ func download(w http.ResponseWriter, r *http.Request) {
 	w.Write(rec.Data)
 }
 
-// ПРАВИЛЬНАЯ ВЕРСИЯ
 func runPython(ctx context.Context, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "python3", args...)
 	cmd.Env = os.Environ()
-
-	// Важно: разделяем stdout (для JSON) и stderr (для логов), чтобы не было конфликтов
-	var outBuf, errBuf strings.Builder
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-
-	err := cmd.Run()
-
-	// Логируем все, что Python написал в stderr, для отладки
-	if errBuf.Len() > 0 {
-		log.Printf("Python stderr:\n%s", errBuf.String())
-	}
-
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		// Если скрипт завершился с ошибкой, возвращаем ее
-		return nil, fmt.Errorf("python script failed: %w", err)
+		return nil, err
 	}
-
-	// Возвращаем только чистый вывод из stdout
-	return []byte(outBuf.String()), nil
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	output, err := io.ReadAll(stdout)
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Wait(); err != nil {
+		return output, err
+	}
+	return output, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -244,11 +249,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func itoa(v int) string { return strconv.Itoa(v) }
-
-func genID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
-}
+func genID() string { return fmt.Sprintf("%d", time.Now().UnixNano()) }
 
 func safeName(s, def string) string {
 	if s == "" {
