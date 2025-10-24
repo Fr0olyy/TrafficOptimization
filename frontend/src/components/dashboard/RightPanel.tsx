@@ -1,23 +1,14 @@
-// src/components/dashboard/RightPanel.tsx
 import { useState } from 'react';
-import type { ProcessResponse, TabType } from '../../types';
-import {
-  getTotalGraphs,
-  getAverageQuantumTime,
-  getTotalFinalCost,
-  getMireaMetricsCount,
-  getAverageIterations,
-  formatTime,
-  formatNumber,
-} from '../../utils/calculations';
+import { GraphVisualization } from "../visualization/GraphVisualization";
+import { YandexMapsVisualization } from "../visualization/YandexMapsVisualization";
+import type { ProcessResponse, TabType } from "../../types";
 import './RightPanel.css';
 
 interface RightPanelProps {
-  results: ProcessResponse | null;
+  results: ProcessResponse;
   activeTab: TabType;
   onTabChange: (tab: TabType) => void;
   selectedGraph: number | null;
-  onGraphSelect?: (graphIndex: number | null) => void;
 }
 
 export function RightPanel({
@@ -25,181 +16,176 @@ export function RightPanel({
   activeTab,
   onTabChange,
   selectedGraph,
-  onGraphSelect,
 }: RightPanelProps) {
+  const [isLoading, setIsLoading] = useState(false);
+
   const tabs: { id: TabType; label: string; icon: string }[] = [
-    { id: 'metrics', label: 'Metrics', icon: '📊' },
-    { id: 'routes', label: 'Routes', icon: '🛣️' },
-    { id: 'visualization', label: 'Visualization', icon: '🔍' },
-    { id: 'maps', label: 'Maps', icon: '🗺️' },
+    { id: "metrics", label: "Metrics", icon: "📊" },
+    { id: "routes", label: "Routes", icon: "🛣️" },
+    { id: "visualization", label: "Graph View", icon: "🔍" },
+    { id: "maps", label: "Map View", icon: "🗺️" },
   ];
 
-  if (!results) {
-    return (
-      <div className="right-panel">
-        <div className="panel-content">
-          <p className="text-center text-gray-400">⏳ Waiting for results...</p>
-        </div>
-      </div>
-    );
-  }
+  // Mock graph data - replace with actual data from your backend
+  const graphData = {
+    nodes: Array.from({ length: 10 }, (_, i) => ({ 
+      id: i, 
+      label: `Node ${i}`
+    })),
+    edges: [
+      { from: 0, to: 1, weight: 10 },
+      { from: 0, to: 2, weight: 15 },
+      { from: 1, to: 3, weight: 12 },
+      { from: 2, to: 3, weight: 10 },
+      { from: 3, to: 4, weight: 8 },
+      { from: 4, to: 5, weight: 9 },
+      { from: 5, to: 6, weight: 11 },
+      { from: 6, to: 7, weight: 7 },
+      { from: 7, to: 8, weight: 13 },
+      { from: 8, to: 9, weight: 6 },
+    ],
+  };
 
-  const renderMetrics = () => {
+  const coordinates = [
+    { id: 0, lat: 55.7558, lon: 37.6173, label: "Kremlin" },
+    { id: 1, lat: 55.7522, lon: 37.6156, label: "Red Square" },
+    { id: 2, lat: 55.7489, lon: 37.6201, label: "GUM" },
+    { id: 3, lat: 55.7508, lon: 37.6170, label: "St. Basil's" },
+    { id: 4, lat: 55.7575, lon: 37.6190, label: "Bolshoi" },
+    { id: 5, lat: 55.7605, lon: 37.6186, label: "Lubjanka" },
+    { id: 6, lat: 55.7635, lon: 37.6215, label: "KGB Museum" },
+    { id: 7, lat: 55.7665, lon: 37.6250, label: "Pushkin Sq" },
+    { id: 8, lat: 55.7690, lon: 37.6300, label: "Tverskaya" },
+    { id: 9, lat: 55.7720, lon: 37.6350, label: "Mayakovskaya" },
+  ];
+
+  // Получаем пути из данных или используем mock данные
+  const getClassicalPath = (): number[] => {
+    if (selectedGraph !== null && results.perGraph[selectedGraph]?.routes?.[0]?.mirea?.path) {
+      return results.perGraph[selectedGraph].routes[0].mirea.path;
+    }
+    return [0, 1, 3, 4]; // fallback path
+  };
+
+  const getQuantumPath = (): number[] => {
+    if (selectedGraph !== null && results.perGraph[selectedGraph]?.routes?.[0]?.quantum?.path) {
+      return results.perGraph[selectedGraph].routes[0].quantum.path;
+    }
+    return [0, 2, 3, 4]; // fallback path
+  };
+
+  const handleTabChange = (tab: TabType) => {
+    setIsLoading(true);
+    onTabChange(tab);
+    setTimeout(() => setIsLoading(false), 500);
+  };
+
+  const renderMetricsTable = () => {
     if (selectedGraph === null) {
+      const avgSpeedup = results.perGraph.length > 0 
+        ? results.perGraph.reduce((acc, g) => acc + g.compare.quantum_speedup, 0) / results.perGraph.length
+        : 0;
+
       return (
-        <div className="metrics-section">
-          <h3 className="section-title">📊 Overall Summary</h3>
+        <div className="metrics-overview">
+          <h4 className="metrics-title">Overall Performance Summary</h4>
           <div className="metrics-grid">
             <div className="metric-card">
-              <div className="metric-label">Total Graphs</div>
-              <div className="metric-value">{getTotalGraphs(results)}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">Total Final Cost</div>
-              <div className="metric-value">{formatNumber(getTotalFinalCost(results), 2)}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">Avg Time (ms)</div>
-              <div className="metric-value">
-                {formatNumber(getAverageQuantumTime(results), 0)}
-              </div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">MIREA Samples</div>
-              <div className="metric-value">{getMireaMetricsCount(results)}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">Avg Iterations</div>
-              <div className="metric-value">
-                {formatNumber(getAverageIterations(results), 0)}
-              </div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">Total Time</div>
-              <div className="metric-value">{formatTime(results.elapsed_ms)}</div>
-            </div>
-          </div>
-
-          <h3 className="section-title mt-6">📈 Graphs List</h3>
-          <div className="graphs-list">
-            {results.perGraph?.map((graph) => (
-              <div
-                key={graph.graph_index}
-                className={`graph-item ${selectedGraph === graph.graph_index ? 'selected' : ''}`}
-                onClick={() => onGraphSelect?.(graph.graph_index)}
-              >
-                <div className="graph-header">
-                  <span className="graph-name">Graph {graph.graph_index}</span>
-                  <span className="graph-cost">${graph.stats?.final_cost?.toFixed(2) || 'N/A'}</span>
+              <div className="metric-icon">⚡</div>
+              <div className="metric-content">
+                <div className="metric-value">
+                  {avgSpeedup.toFixed(2)}x
                 </div>
-                <div className="graph-details">
-                  <span>Routes: {graph.stats?.total_routes || 0}</span>
-                  <span>Time: {formatTime(graph.stats?.time_ms || 0)}</span>
-                </div>
+                <div className="metric-label">Average Speedup</div>
               </div>
-            ))}
+            </div>
+            <div className="metric-card">
+              <div className="metric-icon">📈</div>
+              <div className="metric-content">
+                <div className="metric-value">
+                  {results.perGraph.filter(g => g.compare.quantum_speedup > 1).length}
+                </div>
+                <div className="metric-label">Quantum Advantages</div>
+              </div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-icon">⏱️</div>
+              <div className="metric-content">
+                <div className="metric-value">
+                  {results.elapsed_ms}ms
+                </div>
+                <div className="metric-label">Total Processing</div>
+              </div>
+            </div>
           </div>
         </div>
       );
     }
 
-    // ✅ FIXED: Get graph safely
-    const graph = results.perGraph?.[selectedGraph];
-    if (!graph) {
-      return (
-        <div className="error-section">
-          <p>❌ Graph data not found</p>
-        </div>
-      );
-    }
-
+    const graph = results.perGraph[selectedGraph];
     return (
-      <div className="metrics-section">
-        <div className="graph-header-large">
-          <h3>Graph #{graph.graph_index} Details</h3>
-          <button
-            className="close-btn"
-            onClick={() => onGraphSelect?.(null)}
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="detailed-metrics">
-          <div className="metric-row">
-            <span className="metric-key">Final Cost</span>
-            <span className="metric-val-large">
-              ${graph.stats?.final_cost?.toFixed(2) || 'N/A'}
-            </span>
-          </div>
-          <div className="metric-row">
-            <span className="metric-key">Iterations</span>
-            <span className="metric-val">{graph.stats?.iterations || 0}</span>
-          </div>
-          <div className="metric-row">
-            <span className="metric-key">Execution Time</span>
-            <span className="metric-val">{formatTime(graph.stats?.time_ms || 0)}</span>
-          </div>
-          <div className="metric-row">
-            <span className="metric-key">Total Routes</span>
-            <span className="metric-val">{graph.stats?.total_routes || 0}</span>
-          </div>
-          <div className="metric-row border-t">
-            <span className="metric-key">MIREA Samples</span>
-            <span className="metric-val highlight">
-              {graph.mirea_metric_samples?.length || 0}
-            </span>
+      <div className="detailed-metrics">
+        <div className="metrics-header">
+          <h4>Graph {graph.graph_index + 1} - Detailed Analysis</h4>
+          <div className={`performance-badge ${graph.compare.quantum_speedup > 1 ? 'positive' : 'neutral'}`}>
+            {graph.compare.quantum_speedup > 1 ? 'Quantum Advantage' : 'Classical Optimal'}
           </div>
         </div>
 
-        {/* ✅ MIREA Metrics Details */}
-        {graph.mirea_metric_samples && graph.mirea_metric_samples.length > 0 && (
-          <div className="mirea-section">
-            <h4 className="section-title">📡 MIREA Quantum Metrics</h4>
-            <div className="mirea-samples">
-              {graph.mirea_metric_samples.slice(0, 10).map((sample, idx) => (
-                <div key={idx} className="mirea-item">
-                  <div className="mirea-header">
-                    <span className="route-badge">Route {sample.route_index_sampled}</span>
-                    <span className={`status-badge ${sample.mirea_metrics.success ? 'success' : 'failed'}`}>
-                      {sample.mirea_metrics.success ? '✅ Success' : '❌ Failed'}
-                    </span>
-                  </div>
-                  <div className="mirea-details">
-                    <div>Time: {sample.mirea_metrics.time.toFixed(2)}ms</div>
-                    <div>Shots: {sample.mirea_metrics.shots}</div>
-                    <div>Algorithm: {sample.mirea_metrics.algorithm}</div>
-                  </div>
-                </div>
-              ))}
-              {(graph.mirea_metric_samples?.length || 0) > 10 && (
-                <div className="more-items">
-                  ... and {(graph.mirea_metric_samples?.length || 0) - 10} more samples
-                </div>
-              )}
+        <div className="metrics-comparison">
+          <div className="algorithm-metrics classical">
+            <h5>Classical Algorithm</h5>
+            <div className="metric-row">
+              <span>Distance:</span>
+              <strong>{graph.classical.enhanced.total_distance.toFixed(2)}</strong>
+            </div>
+            <div className="metric-row">
+              <span>Time:</span>
+              <strong>{graph.classical.enhanced.opt_time_ms}ms</strong>
+            </div>
+            <div className="metric-row">
+              <span>Routes:</span>
+              <strong>{graph.stats?.successful || 0} successful</strong>
             </div>
           </div>
-        )}
 
-        {/* Parameters */}
-        <div className="parameters-section mt-4">
-          <h4 className="section-title">⚙️ Processing Parameters</h4>
-          <div className="param-list">
-            <div className="param-item">
-              <span>Solver Iterations:</span>
-              <span className="param-val">{results.parameters.solver_iterations}</span>
+          <div className="algorithm-metrics quantum">
+            <h5>Quantum Algorithm</h5>
+            <div className="metric-row">
+              <span>Distance:</span>
+              <strong className="quantum-value">{graph.quantum.enhanced.total_distance.toFixed(2)}</strong>
             </div>
-            <div className="param-item">
-              <span>Reroute Fraction:</span>
-              <span className="param-val">{results.parameters.reroute_fraction.toFixed(2)}</span>
+            <div className="metric-row">
+              <span>Time:</span>
+              <strong className="quantum-value">{graph.quantum.enhanced.opt_time_ms}ms</strong>
             </div>
-            <div className="param-item">
-              <span>MIREA Samples Requested:</span>
-              <span className="param-val">{results.summary.mirea_samples_requested}</span>
+            <div className="metric-row">
+              <span>Routes:</span>
+              <strong className="quantum-value">{graph.stats?.processed_routes || 0} processed</strong>
             </div>
-            <div className="param-item">
-              <span>Total Graphs:</span>
-              <span className="param-val">{results.summary.total_graphs}</span>
+          </div>
+        </div>
+
+        <div className="speedup-analysis">
+          <h5>Performance Analysis</h5>
+          <div className="analysis-grid">
+            <div className="analysis-item">
+              <span>Speedup Factor:</span>
+              <strong className={graph.compare.quantum_speedup > 1 ? 'positive' : 'neutral'}>
+                {graph.compare.quantum_speedup.toFixed(2)}x
+              </strong>
+            </div>
+            <div className="analysis-item">
+              <span>Time Delta:</span>
+              <strong className="positive">
+                {graph.compare.delta_ms}ms
+              </strong>
+            </div>
+            <div className="analysis-item">
+              <span>Success Rate:</span>
+              <strong className="positive">
+                {graph.stats ? ((graph.stats.successful / graph.stats.total_routes) * 100).toFixed(1) : '0'}%
+              </strong>
             </div>
           </div>
         </div>
@@ -207,44 +193,126 @@ export function RightPanel({
     );
   };
 
+  const renderRoutesTable = () => {
+    if (selectedGraph === null) {
+      return (
+        <div className="no-selection">
+          <div className="no-selection-icon">🛣️</div>
+          <h4>Select a Graph to View Routes</h4>
+          <p>Choose a graph from the left panel to see detailed route information</p>
+        </div>
+      );
+    }
+
+    const graph = results.perGraph[selectedGraph];
+    const routes = graph.routes || [];
+
+    return (
+      <div className="routes-tab">
+        <div className="routes-header">
+          <h4>Route Details - Graph {graph.graph_index + 1}</h4>
+          <div className="routes-stats">
+            <span className="stat-item">
+              <strong>{routes.length}</strong> routes
+            </span>
+            <span className="stat-item">
+              <strong>{graph.stats?.successful || 0}</strong> successful
+            </span>
+          </div>
+        </div>
+
+        <div className="routes-list">
+          {routes.map((route, index) => (
+            <div key={index} className="route-card">
+              <div className="route-header">
+                <span className="route-title">Route {route.route_index + 1}</span>
+                <span className="route-endpoints">
+                  {route.start} → {route.end}
+                </span>
+              </div>
+              
+              <div className="route-comparison">
+                <div className="route-algorithm quantum">
+                  <h6>Quantum Solution</h6>
+                  <div className="route-details">
+                    <span>Path: {route.quantum.path.join(' → ')}</span>
+                    <span>Cost: {route.quantum.cost}</span>
+                    <span>Time: {route.quantum.time}ms</span>
+                    <span>Qubits: {route.quantum.qubits}</span>
+                  </div>
+                </div>
+                
+                {route.mirea && (
+                  <div className="route-algorithm classical">
+                    <h6>Classical Solution</h6>
+                    <div className="route-details">
+                      <span>Path: {route.mirea.path.join(' → ')}</span>
+                      <span>Cost: {route.mirea.cost}</span>
+                      <span>Time: {route.mirea.time}ms</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="right-panel">
-      {/* Tab Navigation */}
-      <div className="tab-navigation">
+      <div className="tabs-container">
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => onTabChange(tab.id)}
+            onClick={() => handleTabChange(tab.id)}
+            className={`tab-button ${activeTab === tab.id ? 'active' : ''}`}
           >
-            {tab.icon} {tab.label}
+            <span className="tab-icon">{tab.icon}</span>
+            <span className="tab-label">{tab.label}</span>
+            {activeTab === tab.id && <div className="tab-indicator" />}
           </button>
         ))}
       </div>
 
-      {/* Tab Content */}
-      <div className="panel-content">
-        {activeTab === 'metrics' && renderMetrics()}
-
-        {activeTab === 'routes' && (
-          <div className="routes-section">
-            <h3 className="section-title">🛣️ Optimized Routes</h3>
-            <p className="text-center text-gray-400">Route optimization details will be displayed here</p>
+      <div className="tab-content">
+        {isLoading ? (
+          <div className="loading-state">
+            <div className="loading-spinner"></div>
+            <p>Loading {tabs.find(t => t.id === activeTab)?.label}...</p>
           </div>
-        )}
+        ) : (
+          <>
+            {activeTab === "metrics" && (
+              <div className="metrics-tab">
+                {renderMetricsTable()}
+              </div>
+            )}
 
-        {activeTab === 'visualization' && (
-          <div className="visualization-section">
-            <h3 className="section-title">🔍 Graph Visualization</h3>
-            <p className="text-center text-gray-400">Graph visualization will be displayed here</p>
-          </div>
-        )}
+            {activeTab === "routes" && (
+              <div className="routes-tab">
+                {renderRoutesTable()}
+              </div>
+            )}
 
-        {activeTab === 'maps' && (
-          <div className="maps-section">
-            <h3 className="section-title">🗺️ Map View</h3>
-            <p className="text-center text-gray-400">Map visualization will be displayed here</p>
-          </div>
+            {activeTab === "visualization" && (
+              <GraphVisualization
+                graphData={graphData}
+                classicalPath={getClassicalPath()}
+                quantumPath={getQuantumPath()}
+              />
+            )}
+
+            {activeTab === "maps" && (
+              <YandexMapsVisualization
+                apiKey="bbbcfa5a-fe28-4f09-aa62-dece34cbc32d"
+                coordinates={coordinates}
+                classicalRoute={getClassicalPath()}
+                quantumRoute={getQuantumPath()}
+              />
+            )}
+          </>
         )}
       </div>
     </div>

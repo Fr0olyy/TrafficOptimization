@@ -1,4 +1,3 @@
-// src/types/index.ts
 export interface GraphMetrics {
   total_distance: number;
   opt_time_ms: number;
@@ -15,7 +14,7 @@ export interface ComparisonMetrics {
   quantum_speedup: number;
 }
 
-// ⭐ Route detail from backend
+// ⭐ NEW: Route detail from backend
 export interface RouteDetail {
   route_index: number;
   start: number;
@@ -35,56 +34,37 @@ export interface RouteDetail {
   } | null;
 }
 
-// ⭐ Graph statistics - MATCHES BACKEND SWAGGER
+// ⭐ NEW: Graph statistics
 export interface GraphStats {
-  final_cost: number;
-  iterations: number;
-  time_ms: number;
+  processed_routes: number;
   total_routes: number;
+  successful: number;
+  pure_quantum_time: number;
+  mirea_time: number | null;
 }
 
-// ⭐ MIREA Metric Sample
-export interface MireaMetricSample {
-  route_index_sampled: number;
-  start: number;
-  end: number;
-  mirea_metrics: {
-    success: boolean;
-    measurements: Record<string, number>;
-    time: number;
-    shots: number;
-    algorithm: string;
-    error?: string;
-  };
-}
-
-// ⭐ UPDATED: GraphResult MATCHES BACKEND SWAGGER
+// ⭐ UPDATED: GraphResult with routes and stats
 export interface GraphResult {
   graph_index: number;
-  stats: GraphStats; // ✅ This is what backend returns!
-  mirea_metric_samples: MireaMetricSample[]; // ✅ This is what backend returns!
+  classical: AlgorithmMetrics;
+  quantum: AlgorithmMetrics;
+  compare: ComparisonMetrics;
+  num_nodes: number;
+  num_vehicles: number;
+  routes?: RouteDetail[];  // ⭐ NEW
+  stats?: GraphStats;       // ⭐ NEW
 }
 
-// ⭐ ProcessResponse MATCHES BACKEND SWAGGER EXACTLY
 export interface ProcessResponse {
   ok: boolean;
+  perGraph: GraphResult[];
   downloads: {
-    submission_csv: string; // ✅ Only this field!
+    submission_csv: string;
   };
   elapsed_ms: number;
-  parameters: {
-    reroute_fraction: number;
-    solver_iterations: number;
-  };
-  perGraph: GraphResult[]; // ✅ Uses new GraphResult
-  summary: {
-    mirea_samples_requested: number;
-    solver_iterations: number;
-    total_graphs: number;
-  };
 }
 
-export type TabType = 'metrics' | 'routes' | 'visualization' | 'maps';
+export type TabType = 'metrics' | 'routes' | 'visualization' | 'maps';  // ⭐ добавил routes
 export type ProcessingStage = 'parsing' | 'classical' | 'quantum' | 'comparing' | 'complete';
 
 export interface ValidationResult {
